@@ -7,6 +7,10 @@
 - Watch mode refreshes the display on an interval without cluttering your terminal history.
 - Output automatically trims to your terminal width for clean presentation.
 
+## Output Example
+
+![codex-status output example](output-example.png)
+
 ## Installation
 
 ### Requirements

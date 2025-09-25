@@ -100,6 +100,7 @@ function parseArgs(argv) {
     watch: false,
     interval: 15,
     limit: 1,
+    minimal: false,
   };
 
   let showHelp = false;
@@ -126,6 +127,8 @@ function parseArgs(argv) {
       }
       options.limit = value;
       i += 1;
+    } else if (arg === '--minimal' || arg === '-m') {
+      options.minimal = true;
     } else if (arg === '--help' || arg === '-h') {
       showHelp = true;
     } else if (arg === '--version' || arg === '-v') {
@@ -146,6 +149,7 @@ Options:
   --watch, -w           Continuously refresh status until interrupted
   --interval, -n <sec>  Seconds between refresh updates (default: 15)
   --limit, -l <count>   Maximum sessions to display (default: 1)
+  --minimal, -m         Hide policy and directory details for a compact view
   --version, -v         Show version information
   --help, -h            Show this message
 `;
@@ -298,12 +302,13 @@ function formatRateWindow(windowData) {
   return `${used}/${reset}`;
 }
 
-function formatSessionSummary(detail) {
+function formatSessionSummary(detail, options = {}) {
+  const minimal = Boolean(options.minimal);
   const fields = [`🕒${formatAgoShort(detail.log.mtime)}`];
   let cwdField = null;
   if (detail.error) {
     fields.push(`❌${detail.error}`);
-    if (cwdField) fields.push(cwdField);
+    if (!minimal && cwdField) fields.push(cwdField);
     return fields.join(' ');
   }
 
@@ -311,13 +316,13 @@ function formatSessionSummary(detail) {
   if (typeof context.model === 'string' && context.model) {
     fields.push(`🤖${stripModelPrefix(context.model)}`);
   }
-  if (context.approval_policy) fields.push(`🛂${context.approval_policy}`);
-  if (context.sandbox_policy && context.sandbox_policy.mode) {
+  if (!minimal && context.approval_policy) fields.push(`🛂${context.approval_policy}`);
+  if (!minimal && context.sandbox_policy && context.sandbox_policy.mode) {
     let sandbox = `🧪${context.sandbox_policy.mode}`;
     if (context.sandbox_policy.network_access === false) sandbox += '🚫';
     fields.push(sandbox);
   }
-  if (context.cwd) {
+  if (!minimal && context.cwd) {
     const displayCwd = trimPath(context.cwd);
     if (displayCwd) cwdField = `📁${displayCwd}`;
   }
@@ -342,22 +347,22 @@ function formatSessionSummary(detail) {
     fields.push('🔄n/a');
   }
 
-  if (cwdField) fields.push(cwdField);
+  if (!minimal && cwdField) fields.push(cwdField);
   return fields.join(' ');
 }
 
-function buildReport(status) {
+function buildReport(status, options = {}) {
   if (status.error) return status.error;
   const detail = status.sessions[0];
   if (!detail) return '⚡ no sessions';
-  return formatSessionSummary(detail);
+  return formatSessionSummary(detail, options);
 }
 
 async function runOnce(options, stdout) {
   const status = await gatherStatuses(path.resolve(options.baseDir), options.limit);
   console.clear();
   const columns = stdout && Number.isInteger(stdout.columns) ? stdout.columns : null;
-  stdout.write(`${truncateToTerminal(buildReport(status), columns)}\n`);
+  stdout.write(`${truncateToTerminal(buildReport(status, options), columns)}\n`);
 }
 
 async function runWatch(options, stdout, deps = {}) {
@@ -373,7 +378,7 @@ async function runWatch(options, stdout, deps = {}) {
     running = true;
     try {
       const status = await gather(baseDir, options.limit);
-      const summary = buildReport(status);
+      const summary = buildReport(status, options);
       console.clear();
       stdout.write(`${truncateToTerminal(summary, columns())}\n`);
     } finally {

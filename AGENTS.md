@@ -30,7 +30,8 @@ working on `codex-status`.
 - `codex-status` should gracefully inform users when Codex CLI is missing or out
   of date, referencing the official OpenAI installation guide.
 - Output lines must fit within the user’s terminal width via `truncateToTerminal`.
-- The working directory badge is placed last in the summary.
+- The working directory badge is placed last in the summary (unless `--minimal`
+  is used, which hides policy and directory fields).
 - `--version` prints `codex-status vX.Y.Z`; `--help` prints usage.
 
 ## Development Notes

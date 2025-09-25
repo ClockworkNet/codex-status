@@ -37,6 +37,7 @@ test('parseArgs supports flags and defaults', () => {
     watch: true,
     interval: 5,
     limit: 3,
+    minimal: false,
   });
   assert.equal(showHelp, false);
   assert.equal(showVersion, false);
@@ -47,6 +48,12 @@ test('parseArgs handles help and version flags', () => {
   assert.equal(options.baseDir.includes('.codex/sessions'), true);
   assert.equal(showHelp, true);
   assert.equal(showVersion, true);
+  assert.equal(options.minimal, false);
+});
+
+test('parseArgs sets minimal mode', () => {
+  const { options } = parseArgs(['-m']);
+  assert.equal(options.minimal, true);
 });
 
 test('ensureCodexCli succeeds via package.json version', () => {
@@ -130,4 +137,42 @@ test('runWatch outputs the same summary as single run', async () => {
 
   assert.equal(fakeStdout.writes.length >= 1, true);
   assert.equal(fakeStdout.writes[0], '🕒now 🤖test-model 🔄n/a 📁tmp/project\n');
+});
+
+test('runWatch minimal mode omits policy and directory', async () => {
+  const fakeStdout = {
+    columns: 120,
+    writes: [],
+    write(chunk) {
+      this.writes.push(chunk);
+    },
+  };
+  const originalClear = console.clear;
+  console.clear = () => {};
+  const status = {
+    sessions: [{
+      log: { mtime: new Date() },
+      lastContext: {
+        model: 'gpt-test-model',
+        cwd: '/tmp/project',
+        sandbox_policy: { mode: 'workspace-write', network_access: false },
+        approval_policy: 'on-request',
+      },
+    }],
+  };
+
+  try {
+    await runWatch({ baseDir: '.', interval: 5, limit: 1, minimal: true }, fakeStdout, {
+      gatherStatuses: async () => status,
+      setIntervalFn: () => {},
+    });
+  } finally {
+    console.clear = originalClear;
+  }
+
+  assert.equal(fakeStdout.writes.length >= 1, true);
+  const output = fakeStdout.writes[0];
+  assert.ok(!output.includes('🛂'));
+  assert.ok(!output.includes('🧪'));
+  assert.ok(!output.includes('📁'));
 });

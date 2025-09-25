@@ -35,6 +35,7 @@ codex-status --watch     # refresh every 15 seconds (default)
 codex-status --watch -n 5  # refresh every 5 seconds
 codex-status --limit 3   # display the three most recent sessions
 codex-status --base ~/custom/path  # override the rollout log directory
+codex-status --minimal   # hide policy and directory fields for tighter output
 codex-status --version   # print version information
 ```
 Use `codex-status --help` for the full option list.

@@ -1,0 +1,40 @@
+{
+  "name": "codex-status",
+  "version": "0.1.0",
+  "description": "Terminal status viewer for Codex token usage sessions.",
+  "bin": {
+    "codex-status": "bin/codex-status.js"
+  },
+  "keywords": [
+    "codex",
+    "openai",
+    "cli",
+    "status"
+  ],
+  "homepage": "https://github.com/clockworknet/codex-status#readme",
+  "bugs": {
+    "url": "https://github.com/clockworknet/codex-status/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/clockworknet/codex-status.git"
+  },
+  "license": "MIT",
+  "author": "Clockwork Net",
+  "type": "commonjs",
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "peerDependencies": {
+    "@openai/codex": ">=0.41.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

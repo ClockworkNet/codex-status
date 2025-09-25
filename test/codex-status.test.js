@@ -6,6 +6,7 @@ const {
   truncateToTerminal,
   parseArgs,
   ensureCodexCli,
+  runWatch,
 } = require('../src/codex-status');
 
 test('compareVersions handles greater, equal, and lesser', () => {
@@ -96,4 +97,37 @@ test('ensureCodexCli fails when PATH binary missing', () => {
   } finally {
     console.error = originalError;
   }
+});
+
+test('runWatch outputs the same summary as single run', async () => {
+  const fakeStdout = {
+    columns: 120,
+    writes: [],
+    write(chunk) {
+      this.writes.push(chunk);
+    },
+  };
+  const originalClear = console.clear;
+  console.clear = () => {};
+  const status = {
+    sessions: [{
+      log: { mtime: new Date() },
+      lastContext: {
+        model: 'gpt-test-model',
+        cwd: '/tmp/project',
+      },
+    }],
+  };
+
+  try {
+    await runWatch({ baseDir: '.', interval: 5, limit: 1 }, fakeStdout, {
+      gatherStatuses: async () => status,
+      setIntervalFn: () => {},
+    });
+  } finally {
+    console.clear = originalClear;
+  }
+
+  assert.equal(fakeStdout.writes.length >= 1, true);
+  assert.equal(fakeStdout.writes[0], '🕒now 🤖test-model 🔄n/a 📁tmp/project\n');
 });

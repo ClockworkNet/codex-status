@@ -298,20 +298,6 @@ function formatRateWindow(windowData) {
   return `${used}/${reset}`;
 }
 
-function formatTimestamp(date) {
-  const now = new Date();
-  const sameDay = date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate();
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
-  const time = `${hours}:${minutes}`;
-  if (sameDay) return time;
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${date.getFullYear()}-${month}-${day} ${time}`;
-}
-
 function formatSessionSummary(detail) {
   const fields = [`🕒${formatAgoShort(detail.log.mtime)}`];
   let cwdField = null;
@@ -374,28 +360,29 @@ async function runOnce(options, stdout) {
   stdout.write(`${truncateToTerminal(buildReport(status), columns)}\n`);
 }
 
-async function runWatch(options, stdout) {
+async function runWatch(options, stdout, deps = {}) {
   const baseDir = path.resolve(options.baseDir);
   const intervalMs = Math.max(1, options.interval) * 1000;
   const columns = () => (stdout && Number.isInteger(stdout.columns) ? stdout.columns : null);
+  const gather = deps.gatherStatuses || gatherStatuses;
+  const setIntervalFn = deps.setIntervalFn || setInterval;
 
   let running = false;
   async function draw() {
     if (running) return;
     running = true;
     try {
-      const status = await gatherStatuses(baseDir, options.limit);
+      const status = await gather(baseDir, options.limit);
       const summary = buildReport(status);
       console.clear();
-      const line = `🕘 ${formatTimestamp(new Date())} ${summary}`;
-      stdout.write(`${truncateToTerminal(line, columns())}\n`);
+      stdout.write(`${truncateToTerminal(summary, columns())}\n`);
     } finally {
       running = false;
     }
   }
 
   await draw();
-  setInterval(() => {
+  setIntervalFn(() => {
     draw().catch((err) => {
       console.error('Watch update failed:', err.message || err);
     });
@@ -445,4 +432,5 @@ module.exports = {
   parseArgs,
   compareVersions,
   truncateToTerminal,
+  runWatch,
 };

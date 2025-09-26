@@ -7,6 +7,8 @@ on:
         description: Release tag to verify (e.g. v0.1.2)
         required: false
         default: ''
+  repository_dispatch:
+    types: [verify-homebrew]
 
 jobs:
   verify:
@@ -23,6 +25,8 @@ jobs:
         run: |
           if [[ -n "${{ github.event.inputs.tag }}" ]]; then
             tag="${{ github.event.inputs.tag }}"
+          elif [[ -n "${{ github.event.client_payload.tag }}" ]]; then
+            tag="${{ github.event.client_payload.tag }}"
           elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             tag="${GITHUB_REF#refs/tags/}"
           else

@@ -88,12 +88,10 @@ jobs:
           name: codex-status ${{ env.TAG_NAME }}
           generate_release_notes: true
 
-      - name: Trigger verification workflow
-        uses: peter-evans/workflow-dispatch@v1
+      - name: Dispatch verify-homebrew event
+        uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           repository: ${{ github.repository }}
-          workflow: verify-homebrew-tarball.yml
-          ref: main
-          inputs: |
-            tag=${{ env.TAG_NAME }}
+          event-type: verify-homebrew
+          client-payload: '{"tag": "${{ env.TAG_NAME }}"}'

@@ -48,8 +48,8 @@ Use `codex-status --help` for the full option list.
 1. Bump the version in `package.json`.
 2. Run `npm run release:prepare` to execute tests, build the release tarball under `dist/`, and refresh the Homebrew formula URL/SHA256.
 3. Inspect the generated tarball checksum in the script output, commit the changes (including the updated formula), and tag the release (`git tag vX.Y.Z`).
-4. Publish to npm (`npm publish`) and push the tag to GitHub so the release tarball matches the checksum.
-5. Update or publish the Homebrew tap (`brew tap --repair ClockworkNet/codex-status`) if necessary.
+4. Publish to npm (`npm publish`) and push the tag to GitHub so the release tarball matches the checksum. Alternatively, trigger the **Manual Release** GitHub Action with the new version—it performs these steps automatically when the `NPM_TOKEN` secret is configured.
+5. Update or publish the Homebrew tap (`brew tap --repair clockworknet/codex-status`) if necessary.
 
 ## Support Policy
 This project is provided as-is with limited support. Please file issues on GitHub and we will respond on a best-effort basis.

@@ -3,8 +3,8 @@ require "language/node"
 class CodexStatus < Formula
   desc "Terminal status viewer for Codex token usage sessions"
   homepage "https://github.com/clockworknet/codex-status"
-  url "https://github.com/clockworknet/codex-status/archive/refs/tags/v0.1.2.tar.gz"
-  sha256 "1accf03446a737e9b9bb24960f6857b7bb9de08be45be19af760295bfa9570f3"
+  url "https://github.com/clockworknet/codex-status/archive/refs/tags/v0.1.3.tar.gz"
+  sha256 "9e8aa34c5a7242502544e473d3d8e64a588c884a9617893c01f8f3d853e3358d"
   license "MIT"
 
   depends_on "node"

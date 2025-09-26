@@ -54,6 +54,16 @@ jobs:
             git commit -m "chore: bump version to v$VERSION"
           fi
 
+      - name: Create git tag
+        run: git tag "$TAG_NAME"
+
+      - name: Push changes and tag
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git push origin HEAD:main
+          git push origin "$TAG_NAME"
+
       - name: Run release preparation script
         run: npm run release:prepare
 
@@ -65,19 +75,10 @@ jobs:
           if [[ -n "$(git status --short)" ]]; then
             git add -A
             git commit -m "chore: release v$VERSION"
+            git push origin HEAD:main
           else
             echo "::error ::No changes detected after running release preparation." && exit 1
           fi
-
-      - name: Create git tag
-        run: git tag "$TAG_NAME"
-
-      - name: Push changes and tag
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          git push origin HEAD:main
-          git push origin "$TAG_NAME"
 
       - name: Publish to npm
         env:

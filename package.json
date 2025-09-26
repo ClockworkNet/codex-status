@@ -1,6 +1,6 @@
 {
   "name": "codex-status",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Terminal status viewer for Codex token usage sessions.",
   "bin": {
     "codex-status": "bin/codex-status.js"

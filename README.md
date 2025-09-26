@@ -14,7 +14,7 @@
 ## Installation
 
 ### Requirements
-- Node.js 18 or newer
+- Node.js 20 or newer
 - Codex CLI (`@openai/codex`) version 0.41.0 or later. Install with `npm install -g @openai/codex` or follow the official guide at [github.com/openai/codex](https://github.com/openai/codex).
 
 ### npm

@@ -45,44 +45,17 @@ jobs:
       - name: Run tests
         run: npm test
 
-      - name: Archive tagged sources
-        id: archive
-        shell: bash
-        run: |
-          mkdir -p dist-ci
-          tar_path="dist-ci/codex-status-${{ steps.tagvars.outputs.version }}.tar.gz"
-          git archive --format=tar.gz --prefix="codex-status-${{ steps.tagvars.outputs.version }}/" "${{ steps.tagvars.outputs.tag }}" > "$tar_path"
-          local_sha=$(shasum -a 256 "$tar_path" | awk '{print $1}')
-          echo "sha=$local_sha" >> "$GITHUB_OUTPUT"
-          echo "tar_path=$tar_path" >> "$GITHUB_OUTPUT"
-
-      - name: Fetch GitHub release tarball
+      - name: Fetch GitHub release tarball SHA
         id: remote
         shell: bash
         run: |
           remote_sha=$(curl -L --fail "https://github.com/clockworknet/codex-status/archive/refs/tags/${{ steps.tagvars.outputs.tag }}.tar.gz" | shasum -a 256 | awk '{print $1}')
           echo "sha=$remote_sha" >> "$GITHUB_OUTPUT"
 
-      - name: Compare SHAs
-        shell: bash
-        run: |
-          local_sha="${{ steps.archive.outputs.sha }}"
-          remote_sha="${{ steps.remote.outputs.sha }}"
-          if [[ "$local_sha" != "$remote_sha" ]]; then
-            echo "::error ::Local archive SHA $local_sha does not match GitHub tarball SHA $remote_sha"
-            exit 1
-          fi
-
       - name: Validate Homebrew formula entry
         shell: bash
         run: |
           url="url \"https://github.com/clockworknet/codex-status/archive/refs/tags/${{ steps.tagvars.outputs.tag }}.tar.gz\""
-          sha="sha256 \"${{ steps.archive.outputs.sha }}\""
+          sha="sha256 \"${{ steps.remote.outputs.sha }}\""
           grep -F "$url" HomebrewFormula/codex-status.rb
           grep -F "$sha" HomebrewFormula/codex-status.rb
-
-      - name: Upload local archive for visibility
-        uses: actions/upload-artifact@v4
-        with:
-          name: codex-status-${{ steps.tagvars.outputs.version }}
-          path: ${{ steps.archive.outputs.tar_path }}

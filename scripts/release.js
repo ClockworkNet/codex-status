@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 const { spawnSync } = require('node:child_process');
-const { readFileSync, writeFileSync, mkdirSync, rmSync } = require('node:fs');
-const { join, resolve } = require('node:path');
+const { readFileSync, writeFileSync } = require('node:fs');
+const https = require('node:https');
+const crypto = require('node:crypto');
 
 function log(step, message) {
   process.stdout.write(`\n[${step}] ${message}\n`);
@@ -49,26 +50,34 @@ function runTests() {
   run('npm', ['test']);
 }
 
-function createArchive(version) {
-  const archiveName = `codex-status-v${version}.tar.gz`;
-  const outputDir = resolve('dist');
-  mkdirSync(outputDir, { recursive: true });
-  const archivePath = join(outputDir, archiveName);
-  try {
-    rmSync(archivePath);
-  } catch (_) {
-    // nothing to clean up
-  }
-  log('archive', `Creating git archive at ${archivePath}`);
-  run('git', ['archive', '--format=tar.gz', `--prefix=codex-status-${version}/`, 'HEAD', '-o', archivePath]);
-  return archivePath;
+function fetchGitHubTarballSha(version) {
+  return new Promise((resolve, reject) => {
+    const url = `https://github.com/clockworknet/codex-status/archive/refs/tags/v${version}.tar.gz`;
+    log('fetch', `Fetching GitHub tarball: ${url}`);
+    
+    const hash = crypto.createHash('sha256');
+    const req = https.get(url, (res) => {
+      if (res.statusCode !== 200) {
+        reject(new Error(`HTTP ${res.statusCode}: ${res.statusMessage}`));
+        return;
+      }
+      
+      res.on('data', (chunk) => hash.update(chunk));
+      res.on('end', () => {
+        const sha = hash.digest('hex');
+        resolve(sha);
+      });
+      res.on('error', reject);
+    });
+    
+    req.on('error', reject);
+    req.setTimeout(30000, () => {
+      req.destroy();
+      reject(new Error('Request timeout'));
+    });
+  });
 }
 
-function calculateSha256(filePath) {
-  const hash = runCapture('shasum', ['-a', '256', filePath]);
-  const [sha] = hash.split(/\s+/);
-  return sha;
-}
 
 function updateFormula(version, sha) {
   const formulaPath = 'HomebrewFormula/codex-status.rb';
@@ -88,7 +97,7 @@ function updateFormula(version, sha) {
   log('formula', `Updated Homebrew formula with version v${version} and SHA.`);
 }
 
-function main() {
+async function main() {
   try {
     log('check', 'Ensuring working tree is clean');
     ensureCleanWorkingTree();
@@ -100,9 +109,8 @@ function main() {
     ensureTagDoesNotExist(tagName);
     runTests();
 
-    const archivePath = createArchive(version);
-    const sha = calculateSha256(archivePath);
-    log('sha', `SHA256 for ${archivePath}: ${sha}`);
+    const sha = await fetchGitHubTarballSha(version);
+    log('sha', `GitHub tarball SHA256: ${sha}`);
 
     updateFormula(version, sha);
 

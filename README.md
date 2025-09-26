@@ -30,7 +30,7 @@ A Homebrew formula is provided under `HomebrewFormula/codex-status.rb`. Once pub
 brew tap clockworknet/codex-status https://github.com/clockworknet/codex-status
 brew install codex-status
 ```
-After each release, update the formula with the new version number and tarball checksum (see Maintenance).
+Use the release helper (`npm run release:prepare`) to regenerate the tarball and checksum before cutting a new tag (see Maintenance).
 
 ## Usage
 ```bash
@@ -46,10 +46,10 @@ Use `codex-status --help` for the full option list.
 
 ## Maintenance
 1. Bump the version in `package.json`.
-2. Regenerate the npm package (`npm publish`).
-3. Create a GitHub release tagged as `vX.Y.Z`.
-4. Update `HomebrewFormula/codex-status.rb` with the new version and release tarball SHA256.
-5. Commit and push the changes, then update the tap (`brew tap --repair clockworknet/codex-status`).
+2. Run `npm run release:prepare` to execute tests, build the release tarball under `dist/`, and refresh the Homebrew formula URL/SHA256.
+3. Inspect the generated tarball checksum in the script output, commit the changes (including the updated formula), and tag the release (`git tag vX.Y.Z`).
+4. Publish to npm (`npm publish`) and push the tag to GitHub so the release tarball matches the checksum.
+5. Update or publish the Homebrew tap (`brew tap --repair clockworknet/codex-status`) if necessary.
 
 ## Support Policy
 This project is provided as-is with limited support. Please file issues on GitHub and we will respond on a best-effort basis.

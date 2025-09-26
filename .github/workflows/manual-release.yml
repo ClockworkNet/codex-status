@@ -47,6 +47,13 @@ jobs:
       - name: Update package version
         run: npm version "$VERSION" --no-git-tag-version
 
+      - name: Commit version bump for clean working tree
+        run: |
+          if [[ -n "$(git status --short)" ]]; then
+            git add -A
+            git commit -m "chore: bump version to v$VERSION"
+          fi
+
       - name: Run release preparation script
         run: npm run release:prepare
 

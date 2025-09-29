@@ -32,9 +32,16 @@ codex-status --watch -n 5  # refresh every 5 seconds
 codex-status --limit 3   # display the three most recent sessions
 codex-status --base ~/custom/path  # override the rollout log directory
 codex-status --minimal   # hide policy and directory fields for tighter output
+codex-status --format "directory,model,daily"  # reorder visible fields
+codex-status --override-model=🤩  # replace the default model emoji
 codex-status --version   # print version information
 ```
 Use `codex-status --help` for the full option list.
+
+### Formatting and Labels
+- `--format` (or `-f`) accepts a comma-separated list of fields that defines both the order and which fields appear. Supported field names include `time`, `model`, `approval`, `sandbox`, `daily`, `weekly`, `recent`, `total`, and `directory` (aliases like `primary`, `cwd`, etc. are supported).
+- `--override-<field>=<label>` lets you replace a field’s prefix emoji/text (for example, `--override-directory=DIR:`). Provide the value inline or as the next argument.
+- Minimal mode (`--minimal`) still hides approval, sandbox, and directory fields even if requested in the custom format.
 
 ## Maintenance
 1. Bump the version in `package.json`.

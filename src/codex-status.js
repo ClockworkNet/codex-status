@@ -94,6 +94,94 @@ function ensureCodexCli(required = '0.41.0', overrides = {}) {
   return true;
 }
 
+const CANONICAL_FIELDS = [
+  'time',
+  'error',
+  'model',
+  'approval',
+  'sandbox',
+  'daily',
+  'weekly',
+  'recent',
+  'total',
+  'directory',
+];
+
+const FIELD_ALIASES = {
+  time: 'time',
+  timestamp: 'time',
+  age: 'time',
+  error: 'error',
+  model: 'model',
+  agent: 'model',
+  approval: 'approval',
+  policy: 'approval',
+  sandbox: 'sandbox',
+  'sandbox-policy': 'sandbox',
+  env: 'sandbox',
+  primary: 'daily',
+  daily: 'daily',
+  quota: 'daily',
+  secondary: 'weekly',
+  weekly: 'weekly',
+  billing: 'weekly',
+  recent: 'recent',
+  'recent-tokens': 'recent',
+  latest: 'recent',
+  total: 'total',
+  'total-tokens': 'total',
+  cumulative: 'total',
+  directory: 'directory',
+  cwd: 'directory',
+  path: 'directory',
+};
+
+const DEFAULT_FORMAT_ORDER = [
+  'time',
+  'error',
+  'model',
+  'approval',
+  'sandbox',
+  'daily',
+  'weekly',
+  'recent',
+  'total',
+  'directory',
+];
+
+function normalizeFieldKey(key) {
+  if (typeof key !== 'string') return null;
+  const lookup = FIELD_ALIASES[key.trim().toLowerCase()];
+  if (!lookup) return null;
+  return CANONICAL_FIELDS.includes(lookup) ? lookup : null;
+}
+
+function parseFormatList(raw) {
+  if (typeof raw !== 'string') {
+    throw new Error('Format must be a comma-separated list of field names.');
+  }
+  const parts = raw
+    .split(',')
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  if (!parts.length) {
+    throw new Error('Format must include at least one field.');
+  }
+  const seen = new Set();
+  const result = [];
+  for (const part of parts) {
+    const normalized = normalizeFieldKey(part);
+    if (!normalized) {
+      throw new Error(`Unknown field in format: ${part}`);
+    }
+    if (!seen.has(normalized)) {
+      seen.add(normalized);
+      result.push(normalized);
+    }
+  }
+  return result;
+}
+
 function parseArgs(argv) {
   const options = {
     baseDir: path.join(os.homedir(), '.codex', 'sessions'),
@@ -101,6 +189,8 @@ function parseArgs(argv) {
     interval: 15,
     limit: 1,
     minimal: false,
+    formatOrder: null,
+    labelOverrides: {},
   };
 
   let showHelp = false;
@@ -108,7 +198,29 @@ function parseArgs(argv) {
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
-    if ((arg === '--base' || arg === '-b') && argv[i + 1]) {
+    if (arg.startsWith('--format=')) {
+      const value = arg.slice('--format='.length);
+      options.formatOrder = parseFormatList(value);
+    } else if (arg.startsWith('--override-')) {
+      const [flag, inlineValue] = arg.split('=', 2);
+      const keyPart = flag.slice('--override-'.length);
+      if (!keyPart) {
+        throw new Error('Override flag requires a field name.');
+      }
+      let overrideValue = inlineValue;
+      if (overrideValue === undefined) {
+        overrideValue = argv[i + 1];
+        if (overrideValue === undefined) {
+          throw new Error(`Override for ${keyPart} requires a value.`);
+        }
+        i += 1;
+      }
+      const normalizedKey = normalizeFieldKey(keyPart);
+      if (!normalizedKey) {
+        throw new Error(`Unknown override field: ${keyPart}`);
+      }
+      options.labelOverrides[normalizedKey] = overrideValue;
+    } else if ((arg === '--base' || arg === '-b') && argv[i + 1]) {
       options.baseDir = argv[i + 1];
       i += 1;
     } else if (arg === '--watch' || arg === '-w') {
@@ -129,6 +241,13 @@ function parseArgs(argv) {
       i += 1;
     } else if (arg === '--minimal' || arg === '-m') {
       options.minimal = true;
+    } else if (arg === '--format' || arg === '-f') {
+      const value = argv[i + 1];
+      if (value === undefined) {
+        throw new Error('Format flag requires a comma-separated list of fields.');
+      }
+      options.formatOrder = parseFormatList(value);
+      i += 1;
     } else if (arg === '--help' || arg === '-h') {
       showHelp = true;
     } else if (arg === '--version' || arg === '-v') {
@@ -150,6 +269,9 @@ Options:
   --interval, -n <sec>  Seconds between refresh updates (default: 15)
   --limit, -l <count>   Maximum sessions to display (default: 1)
   --minimal, -m         Hide policy and directory details for a compact view
+  --format, -f <fields> Comma-separated field order (e.g., time,model,directory)
+  --override-<field> <label>
+                        Replace a field label emoji/text (e.g., --override-model=🤩)
   --version, -v         Show version information
   --help, -h            Show this message
 `;
@@ -302,53 +424,141 @@ function formatRateWindow(windowData) {
   return `${used}/${reset}`;
 }
 
+const FIELD_DEFINITIONS = {
+  time: {
+    defaultLabel: '🕒',
+    build: ({ detail }) => formatAgoShort(detail.log.mtime),
+  },
+  error: {
+    defaultLabel: '❌',
+    build: ({ detail }) => detail.error || null,
+  },
+  model: {
+    defaultLabel: '🤖',
+    build: ({ context }) => {
+      if (typeof context.model === 'string' && context.model) {
+        return stripModelPrefix(context.model);
+      }
+      return null;
+    },
+  },
+  approval: {
+    defaultLabel: '🛂',
+    build: ({ context, minimal }) => {
+      if (minimal) return null;
+      if (context.approval_policy) return context.approval_policy;
+      return null;
+    },
+  },
+  sandbox: {
+    defaultLabel: '🧪',
+    build: ({ context, minimal }) => {
+      if (minimal) return null;
+      const policy = context.sandbox_policy;
+      if (policy && policy.mode) {
+        let label = policy.mode;
+        if (policy.network_access === false) label += '🚫';
+        return label;
+      }
+      return null;
+    },
+  },
+  daily: {
+    defaultLabel: '🕔',
+    build: ({ rateLimits }) => {
+      if (rateLimits && rateLimits.primary) {
+        return formatRateWindow(rateLimits.primary);
+      }
+      return null;
+    },
+  },
+  weekly: {
+    defaultLabel: '🗓',
+    build: ({ rateLimits }) => {
+      if (rateLimits && rateLimits.secondary) {
+        return formatRateWindow(rateLimits.secondary);
+      }
+      return null;
+    },
+  },
+  recent: {
+    defaultLabel: '🔄',
+    build: ({ tokenInfo }) => {
+      if (tokenInfo && tokenInfo.last_token_usage && typeof tokenInfo.last_token_usage.total_tokens === 'number') {
+        return formatCompact(tokenInfo.last_token_usage.total_tokens);
+      }
+      if (!tokenInfo) return 'n/a';
+      return null;
+    },
+  },
+  total: {
+    defaultLabel: '📦',
+    build: ({ tokenInfo }) => {
+      if (tokenInfo && tokenInfo.total_token_usage && typeof tokenInfo.total_token_usage.total_tokens === 'number') {
+        return formatCompact(tokenInfo.total_token_usage.total_tokens);
+      }
+      return null;
+    },
+  },
+  directory: {
+    defaultLabel: '📁',
+    build: ({ context, minimal }) => {
+      if (minimal) return null;
+      if (context.cwd) {
+        const display = trimPath(context.cwd);
+        if (display) return display;
+      }
+      return null;
+    },
+  },
+};
+
 function formatSessionSummary(detail, options = {}) {
   const minimal = Boolean(options.minimal);
-  const fields = [`🕒${formatAgoShort(detail.log.mtime)}`];
-  let cwdField = null;
-  if (detail.error) {
-    fields.push(`❌${detail.error}`);
-    if (!minimal && cwdField) fields.push(cwdField);
-    return fields.join(' ');
+  const labelOverrides = options.labelOverrides || {};
+  const orderSource = Array.isArray(options.formatOrder) && options.formatOrder.length > 0
+    ? options.formatOrder
+    : DEFAULT_FORMAT_ORDER;
+  const order = [];
+  for (const entry of orderSource) {
+    const key = normalizeFieldKey(entry);
+    if (key && !order.includes(key)) order.push(key);
   }
 
   const context = detail.lastContext || {};
-  if (typeof context.model === 'string' && context.model) {
-    fields.push(`🤖${stripModelPrefix(context.model)}`);
-  }
-  if (!minimal && context.approval_policy) fields.push(`🛂${context.approval_policy}`);
-  if (!minimal && context.sandbox_policy && context.sandbox_policy.mode) {
-    let sandbox = `🧪${context.sandbox_policy.mode}`;
-    if (context.sandbox_policy.network_access === false) sandbox += '🚫';
-    fields.push(sandbox);
-  }
-  if (!minimal && context.cwd) {
-    const displayCwd = trimPath(context.cwd);
-    if (displayCwd) cwdField = `📁${displayCwd}`;
-  }
+  const tokenCount = detail.lastTokenCount || null;
+  const tokenInfo = tokenCount ? tokenCount.info || null : null;
+  const rateLimits = tokenCount ? tokenCount.rate_limits || null : null;
 
-  const rateLimits = detail.lastTokenCount ? detail.lastTokenCount.rate_limits : null;
-  if (rateLimits) {
-    if (rateLimits.primary) fields.push(`🕔${formatRateWindow(rateLimits.primary)}`);
-    if (rateLimits.secondary) fields.push(`🗓${formatRateWindow(rateLimits.secondary)}`);
-  }
+  const fieldContext = {
+    detail,
+    minimal,
+    context,
+    tokenInfo,
+    rateLimits,
+  };
 
-  const tokenInfo = detail.lastTokenCount ? detail.lastTokenCount.info : null;
-  if (tokenInfo) {
-    const recent = tokenInfo.last_token_usage || {};
-    const total = tokenInfo.total_token_usage || {};
-    if (typeof recent.total_tokens === 'number') {
-      fields.push(`🔄${formatCompact(recent.total_tokens)}`);
+  const pieces = [];
+  for (const key of order) {
+    const definition = FIELD_DEFINITIONS[key];
+    if (!definition) continue;
+    const value = definition.build(fieldContext);
+    if (value == null || value === '') continue;
+    const override = Object.prototype.hasOwnProperty.call(labelOverrides, key)
+      ? labelOverrides[key]
+      : undefined;
+    const label = override !== undefined ? override : definition.defaultLabel;
+    if (label && String(label).length > 0) {
+      pieces.push(`${label}${value}`);
+    } else {
+      pieces.push(String(value));
     }
-    if (typeof total.total_tokens === 'number') {
-      fields.push(`📦${formatCompact(total.total_tokens)}`);
-    }
-  } else {
-    fields.push('🔄n/a');
   }
 
-  if (!minimal && cwdField) fields.push(cwdField);
-  return fields.join(' ');
+  if (!pieces.length) {
+    return '⚡ no status';
+  }
+  return pieces.join(' ');
 }
 
 function buildReport(status, options = {}) {

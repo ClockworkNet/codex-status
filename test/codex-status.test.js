@@ -9,6 +9,22 @@ const {
   runWatch,
 } = require('../src/codex-status');
 
+test('parseArgs captures format and overrides', () => {
+  const { options } = parseArgs([
+    '--format',
+    'model,directory,weekly',
+    '--override-model',
+    'mdl',
+    '--override-directory=dir',
+  ]);
+
+  assert.deepEqual(options.formatOrder, ['model', 'directory', 'weekly']);
+  assert.deepEqual(options.labelOverrides, {
+    model: 'mdl',
+    directory: 'dir',
+  });
+});
+
 test('compareVersions handles greater, equal, and lesser', () => {
   assert.equal(compareVersions('0.42.0', '0.41.9'), 1);
   assert.equal(compareVersions('0.41.0', '0.41.0'), 0);
@@ -38,6 +54,8 @@ test('parseArgs supports flags and defaults', () => {
     interval: 5,
     limit: 3,
     minimal: false,
+    formatOrder: null,
+    labelOverrides: {},
   });
   assert.equal(showHelp, false);
   assert.equal(showVersion, false);
@@ -175,4 +193,51 @@ test('runWatch minimal mode omits policy and directory', async () => {
   assert.ok(!output.includes('🛂'));
   assert.ok(!output.includes('🧪'));
   assert.ok(!output.includes('📁'));
+});
+
+test('runWatch respects custom format and labels', async () => {
+  const fakeStdout = {
+    columns: 120,
+    writes: [],
+    write(chunk) {
+      this.writes.push(chunk);
+    },
+  };
+  const originalClear = console.clear;
+  console.clear = () => {};
+  const status = {
+    sessions: [{
+      log: { mtime: new Date() },
+      lastContext: {
+        model: 'gpt-test-model',
+        cwd: '/tmp/project',
+      },
+      lastTokenCount: {
+        info: {
+          last_token_usage: { total_tokens: 1234 },
+        },
+      },
+    }],
+  };
+
+  try {
+    await runWatch({
+      baseDir: '.',
+      interval: 5,
+      limit: 1,
+      formatOrder: ['recent', 'model', 'directory'],
+      labelOverrides: { recent: '++', model: '', directory: 'DIR:' },
+    }, fakeStdout, {
+      gatherStatuses: async () => status,
+      setIntervalFn: () => {},
+    });
+  } finally {
+    console.clear = originalClear;
+  }
+
+  assert.equal(fakeStdout.writes.length >= 1, true);
+  const output = fakeStdout.writes[0];
+  assert.ok(output.startsWith('++1.2K'));
+  assert.ok(output.includes('test-model'));
+  assert.ok(output.includes('DIR:tmp/project'));
 });

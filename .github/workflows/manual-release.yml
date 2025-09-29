@@ -44,14 +44,19 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Run tests
+        run: npm test
+
       - name: Update package version
         run: npm version "$VERSION" --no-git-tag-version
 
-      - name: Commit version bump for clean working tree
+      - name: Commit release changes
         run: |
           if [[ -n "$(git status --short)" ]]; then
             git add -A
-            git commit -m "chore: bump version to v$VERSION"
+            git commit -m "chore: release v$VERSION"
+          else
+            echo "::error ::No changes detected after bumping the version." && exit 1
           fi
 
       - name: Create git tag
@@ -63,22 +68,6 @@ jobs:
         run: |
           git push origin HEAD:main
           git push origin "$TAG_NAME"
-
-      - name: Run release preparation script
-        run: npm run release:prepare
-
-      - name: Remove generated dist artifacts
-        run: rm -rf dist
-
-      - name: Commit release preparation changes
-        run: |
-          if [[ -n "$(git status --short)" ]]; then
-            git add -A
-            git commit -m "chore: release v$VERSION"
-            git push origin HEAD:main
-          else
-            echo "::error ::No changes detected after running release preparation." && exit 1
-          fi
 
       - name: Publish to npm
         env:
@@ -95,11 +84,3 @@ jobs:
           tag_name: ${{ env.TAG_NAME }}
           name: codex-status ${{ env.TAG_NAME }}
           generate_release_notes: true
-
-      - name: Dispatch verify-homebrew event
-        uses: peter-evans/repository-dispatch@v3
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          repository: ${{ github.repository }}
-          event-type: verify-homebrew
-          client-payload: '{"tag": "${{ env.TAG_NAME }}"}'

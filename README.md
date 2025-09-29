@@ -24,14 +24,6 @@ npm install -g codex-status
 npx codex-status --help
 ```
 
-### Homebrew
-A Homebrew formula is provided under `HomebrewFormula/codex-status.rb`. Once published, users can install via:
-```bash
-brew tap ClockworkNet/codex-status https://github.com/ClockworkNet/codex-status
-brew install codex-status
-```
-Use the release helper (`npm run release:prepare`) to regenerate the tarball and checksum before cutting a new tag (see Maintenance).
-
 ## Usage
 ```bash
 codex-status             # show the most recent session summary
@@ -46,10 +38,10 @@ Use `codex-status --help` for the full option list.
 
 ## Maintenance
 1. Bump the version in `package.json`.
-2. Run `npm run release:prepare` to execute tests, build the release tarball under `dist/`, and refresh the Homebrew formula URL/SHA256.
-3. Inspect the generated tarball checksum in the script output, commit the changes (including the updated formula), and tag the release (`git tag vX.Y.Z`).
-4. Publish to npm (`npm publish`) and push the tag to GitHub so the release tarball matches the checksum. Alternatively, trigger the **Manual Release** GitHub Action with the new version—it performs these steps automatically when the `NPM_TOKEN` secret is configured.
-5. Update or publish the Homebrew tap (`brew tap --repair clockworknet/codex-status`) if necessary.
+2. Run `npm test` to ensure the suite passes.
+3. Commit the version bump and tag the release (`git tag vX.Y.Z`).
+4. Publish to npm (`npm publish`) and push the tag to GitHub.
+5. Optional: trigger the **Manual Release** GitHub Action instead of the manual steps—provide the new version and, if needed, an npm dist-tag. The workflow bumps the version, runs tests, pushes the tag, bumps npm, and creates the GitHub release (requires the `NPM_TOKEN` secret).
 
 ## Support Policy
 This project is provided as-is with limited support. Please file issues on GitHub and we will respond on a best-effort basis.

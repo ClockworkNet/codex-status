@@ -72,7 +72,7 @@ function ensureCodexCli(required = '0.41.0', overrides = {}) {
     }
     return true;
   } catch (err) {
-    // fall back to checking PATH for Homebrew or other installs
+    // fall back to checking PATH for other installations
   }
 
   const result = execSpawn();

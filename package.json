@@ -29,8 +29,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --test",
-    "release:prepare": "node scripts/release.js"
+    "test": "node --test"
   },
   "peerDependencies": {
     "@openai/codex": ">=0.41.0"

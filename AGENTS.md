@@ -6,11 +6,10 @@ working on `codex-status`.
 ## Overview
 - Purpose: lightweight CLI that reads Codex rollout logs from `~/.codex/sessions`
   and prints a single status line (one-off or watch mode).
-- Tech stack: Node.js ≥ 18, CommonJS modules, standard library only
+- Tech stack: Node.js ≥ 20, CommonJS modules, standard library only
   (no runtime dependencies).
-- Distribution targets:
-  - npm package `codex-status` exposing the `codex-status` binary.
-  - Optional Homebrew Formula (`HomebrewFormula/codex-status.rb`).
+- Distribution target: npm package `codex-status` exposing the `codex-status`
+  binary.
 - Required tooling: Codex CLI `@openai/codex` version ≥ 0.41.0 available on the
   system, either via npm or the official installation instructions.
 
@@ -23,7 +22,6 @@ working on `codex-status`.
   parsing, terminal truncation, version comparisons, and Codex CLI detection.
 - `README.md`: user-facing instructions, including install, usage, maintenance,
   limited support policy, and Codex acknowledgement.
-- `HomebrewFormula/codex-status.rb`: template formula for the Homebrew tap.
 - `LICENSE`: MIT license.
 
 ## Expected Behaviours
@@ -38,14 +36,13 @@ working on `codex-status`.
 - Run tests with `npm test` (Node’s built-in test runner).
 - The project avoids external dependencies; prefer adding small utilities in
   `src/codex-status.js` when needed.
-- Keep documentation aligned with OpenAI Codex’s official guidance and update
-  the Homebrew formula checksum when publishing new releases.
+- Keep documentation aligned with OpenAI Codex’s official guidance.
 - Maintain acknowledgements that the tool was built with assistance from OpenAI
   Codex and provide limited-support messaging.
 
 ## Collaboration Expectations
 - Follow MIT license terms.
 - Respect semantic versioning when modifying behaviour.
-- Update README, tests, and Homebrew formula when features or options change.
+- Update README and tests when features or options change.
 - Ensure any automated agents leave concise, well-scoped commits and describe
   modifications clearly in pull requests.

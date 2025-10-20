@@ -242,3 +242,59 @@ test('runWatch respects custom format and labels', async () => {
   assert.ok(output.includes('test-model'));
   assert.ok(output.includes('DIR:tmp/project'));
 });
+
+test('runWatch renders rate limit resets as time or date', async () => {
+  const fakeStdout = {
+    columns: 120,
+    writes: [],
+    write(chunk) {
+      this.writes.push(chunk);
+    },
+  };
+  const originalClear = console.clear;
+  const originalNow = Date.now;
+  console.clear = () => {};
+
+  const base = new Date();
+  base.setHours(12, 0, 0, 0);
+  const baseMs = base.getTime();
+  Date.now = () => baseMs;
+
+  const status = {
+    sessions: [{
+      log: { mtime: new Date(baseMs) },
+      lastContext: {},
+      lastTokenCount: {
+        rate_limits: {
+          primary: { used_percent: 12, resets_in_seconds: 5 * 60 * 60 },
+          secondary: { used_percent: 34, resets_in_seconds: 3 * 24 * 60 * 60 },
+        },
+      },
+    }],
+  };
+
+  try {
+    await runWatch({
+      baseDir: '.',
+      interval: 5,
+      limit: 1,
+      formatOrder: ['daily', 'weekly'],
+    }, fakeStdout, {
+      gatherStatuses: async () => status,
+      setIntervalFn: () => {},
+    });
+  } finally {
+    console.clear = originalClear;
+    Date.now = originalNow;
+  }
+
+  assert.equal(fakeStdout.writes.length >= 1, true);
+  const output = fakeStdout.writes[0].trim();
+  const segments = output.split(/\s+/);
+  const daily = segments.find((part) => part.startsWith('🕔'));
+  const weekly = segments.find((part) => part.startsWith('🗓'));
+  assert.ok(daily);
+  assert.ok(weekly);
+  assert.match(daily, /🕔\d+%\/\d{2}:\d{2}/);
+  assert.match(weekly, /🗓\d+%\/\d{2}\/\d{2}/);
+});

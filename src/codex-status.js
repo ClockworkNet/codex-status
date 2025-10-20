@@ -396,6 +396,30 @@ function formatAgoShort(date) {
   return duration.replace(/\s+/g, '');
 }
 
+function formatResetTarget(seconds, now = Date.now()) {
+  if (!Number.isFinite(seconds)) return 'n/a';
+  if (!Number.isFinite(now)) return 'n/a';
+  if (seconds <= 0) return 'now';
+  const targetMs = now + (seconds * 1000);
+  if (!Number.isFinite(targetMs)) return 'n/a';
+  const target = new Date(targetMs);
+  if (Number.isNaN(target.getTime())) return 'n/a';
+  const current = new Date(now);
+  const sameDay = (
+    target.getFullYear() === current.getFullYear()
+    && target.getMonth() === current.getMonth()
+    && target.getDate() === current.getDate()
+  );
+  if (sameDay) {
+    const hours = String(target.getHours()).padStart(2, '0');
+    const minutes = String(target.getMinutes()).padStart(2, '0');
+    return `${hours}:${minutes}`;
+  }
+  const month = String(target.getMonth() + 1).padStart(2, '0');
+  const day = String(target.getDate()).padStart(2, '0');
+  return `${month}/${day}`;
+}
+
 const compactFormatter = new Intl.NumberFormat('en-US', {
   notation: 'compact',
   maximumFractionDigits: 1,
@@ -467,7 +491,7 @@ async function gatherStatuses(baseDir, limit) {
 function formatRateWindow(windowData) {
   if (!windowData) return 'n/a';
   const used = windowData.used_percent != null ? `${windowData.used_percent}%` : 'n/a';
-  const reset = formatDuration(windowData.resets_in_seconds, 1).replace(/\s+/g, '');
+  const reset = formatResetTarget(windowData.resets_in_seconds);
   return `${used}/${reset}`;
 }
 

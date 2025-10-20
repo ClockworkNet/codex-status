@@ -31,11 +31,12 @@ test('compareVersions handles greater, equal, and lesser', () => {
   assert.equal(compareVersions('0.40.10', '0.41.0'), -1);
 });
 
-test('truncateToTerminal respects columns and unicode length', () => {
+test('truncateToTerminal respects columns and unicode width', () => {
   assert.equal(truncateToTerminal('hello', 10), 'hello');
   assert.equal(truncateToTerminal('hello', 4), 'hell');
-  // emoji should count as single character visually when using Array.from
-  assert.equal(truncateToTerminal('🙂🙂🙂', 2), '🙂🙂');
+  assert.equal(truncateToTerminal('🙂🙂🙂', 4), '🙂🙂');
+  assert.equal(truncateToTerminal('🕒now 🤖bot', 9), '🕒now 🤖b');
+  assert.equal(truncateToTerminal('A\u0301BC', 2), 'ÁB');
 });
 
 test('parseArgs supports flags and defaults', () => {

@@ -23,11 +23,58 @@ function stripModelPrefix(model) {
   return model.startsWith('gpt-') ? model.slice(4) : model;
 }
 
+const MARK_REGEX = /\p{Mark}/u;
+const EXTENDED_PICTOGRAPHIC_REGEX = /\p{Extended_Pictographic}/u;
+
+function isFullWidthCodePoint(codePoint) {
+  return (
+    codePoint >= 0x1100
+    && (
+      codePoint <= 0x115f
+      || codePoint === 0x2329
+      || codePoint === 0x232a
+      || (codePoint >= 0x2e80 && codePoint <= 0x303e)
+      || (codePoint >= 0x3040 && codePoint <= 0xa4cf)
+      || (codePoint >= 0xac00 && codePoint <= 0xd7a3)
+      || (codePoint >= 0xf900 && codePoint <= 0xfaff)
+      || (codePoint >= 0xfe10 && codePoint <= 0xfe19)
+      || (codePoint >= 0xfe30 && codePoint <= 0xfe6f)
+      || (codePoint >= 0xff00 && codePoint <= 0xff60)
+      || (codePoint >= 0xffe0 && codePoint <= 0xffe6)
+      || (codePoint >= 0x1f300 && codePoint <= 0x1f64f)
+      || (codePoint >= 0x1f900 && codePoint <= 0x1f9ff)
+      || (codePoint >= 0x1fa70 && codePoint <= 0x1faff)
+      || (codePoint >= 0x20000 && codePoint <= 0x3fffd)
+    )
+  );
+}
+
+function codePointWidth(codePoint) {
+  if (codePoint === 0) return 0;
+  if (codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f)) return 0;
+  if (codePoint === 0x200d) return 0; // zero-width joiner
+  if (codePoint >= 0xfe00 && codePoint <= 0xfe0f) return 0; // variation selectors
+  const char = String.fromCodePoint(codePoint);
+  if (MARK_REGEX.test(char)) return 0;
+  if (EXTENDED_PICTOGRAPHIC_REGEX.test(char)) return 2;
+  if (isFullWidthCodePoint(codePoint)) return 2;
+  return 1;
+}
+
 function truncateToTerminal(text, columns) {
   if (!columns || columns <= 0) return text;
-  const chars = Array.from(text);
-  if (chars.length <= columns) return text;
-  return chars.slice(0, columns).join('');
+  let width = 0;
+  let result = '';
+  for (let i = 0; i < text.length; i += 1) {
+    const codePoint = text.codePointAt(i);
+    const char = String.fromCodePoint(codePoint);
+    if (codePoint > 0xffff) i += 1;
+    const charWidth = codePointWidth(codePoint);
+    if (width + charWidth > columns) break;
+    result += char;
+    width += charWidth;
+  }
+  return result;
 }
 
 function compareVersions(a, b) {

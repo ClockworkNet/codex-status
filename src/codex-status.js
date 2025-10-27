@@ -420,6 +420,51 @@ function formatResetTarget(seconds, now = Date.now()) {
   return `${month}/${day}`;
 }
 
+function parseTimestampMs(value) {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return null;
+    return value > 1e12 ? value : value * 1000;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const numeric = Number(trimmed);
+    if (Number.isFinite(numeric)) {
+      return numeric > 1e12 ? numeric : numeric * 1000;
+    }
+    const parsed = Date.parse(trimmed);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  return null;
+}
+
+function resolveResetSeconds(windowData, now = Date.now()) {
+  if (!windowData || typeof windowData !== 'object') return null;
+  const resetsSecondsRaw = windowData.resets_in_seconds;
+  if (Number.isFinite(resetsSecondsRaw)) {
+    return resetsSecondsRaw;
+  }
+  if (typeof resetsSecondsRaw === 'string') {
+    const trimmed = resetsSecondsRaw.trim();
+    if (trimmed) {
+      const numeric = Number(trimmed);
+      if (Number.isFinite(numeric)) return numeric;
+    }
+  }
+
+  const nowMs = Number.isFinite(now) ? now : Date.now();
+  const candidates = ['resets_at', 'reset_at', 'resetsAt', 'resetAt'];
+  for (const key of candidates) {
+    if (!(key in windowData)) continue;
+    const ms = parseTimestampMs(windowData[key]);
+    if (!Number.isFinite(ms)) continue;
+    const diffSeconds = Math.floor((ms - nowMs) / 1000);
+    if (Number.isFinite(diffSeconds)) return diffSeconds;
+  }
+
+  return null;
+}
+
 const compactFormatter = new Intl.NumberFormat('en-US', {
   notation: 'compact',
   maximumFractionDigits: 1,
@@ -491,7 +536,9 @@ async function gatherStatuses(baseDir, limit) {
 function formatRateWindow(windowData) {
   if (!windowData) return 'n/a';
   const used = windowData.used_percent != null ? `${windowData.used_percent}%` : 'n/a';
-  const reset = formatResetTarget(windowData.resets_in_seconds);
+  const nowMs = Date.now();
+  const resetSeconds = resolveResetSeconds(windowData, nowMs);
+  const reset = formatResetTarget(resetSeconds, nowMs);
   return `${used}/${reset}`;
 }
 

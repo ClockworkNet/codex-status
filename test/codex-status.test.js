@@ -259,6 +259,8 @@ test('runWatch renders rate limit resets as time or date', async () => {
   base.setHours(12, 0, 0, 0);
   const baseMs = base.getTime();
   Date.now = () => baseMs;
+  const primaryResetAt = Math.floor((baseMs + (5 * 60 * 60 * 1000)) / 1000);
+  const secondaryResetAt = Math.floor((baseMs + (3 * 24 * 60 * 60 * 1000)) / 1000);
 
   const status = {
     sessions: [{
@@ -266,8 +268,8 @@ test('runWatch renders rate limit resets as time or date', async () => {
       lastContext: {},
       lastTokenCount: {
         rate_limits: {
-          primary: { used_percent: 12, resets_in_seconds: 5 * 60 * 60 },
-          secondary: { used_percent: 34, resets_in_seconds: 3 * 24 * 60 * 60 },
+          primary: { used_percent: 12, window_minutes: 300, resets_at: primaryResetAt },
+          secondary: { used_percent: 34, window_minutes: 4320, resets_at: secondaryResetAt },
         },
       },
     }],

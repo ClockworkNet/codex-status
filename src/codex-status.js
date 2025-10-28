@@ -5,6 +5,7 @@ const path = require('path');
 const os = require('os');
 const readline = require('readline');
 const { spawnSync } = require('child_process');
+const { playAlertSound, generateBeepWav, generateG6ChordBeep } = require('./sound');
 
 function trimPath(p) {
   if (!p) return '';
@@ -151,6 +152,7 @@ const CANONICAL_FIELDS = [
   'weekly',
   'recent',
   'total',
+  'activity',
   'directory',
 ];
 
@@ -178,6 +180,9 @@ const FIELD_ALIASES = {
   total: 'total',
   'total-tokens': 'total',
   cumulative: 'total',
+  activity: 'activity',
+  role: 'activity',
+  action: 'activity',
   directory: 'directory',
   cwd: 'directory',
   path: 'directory',
@@ -185,6 +190,7 @@ const FIELD_ALIASES = {
 
 const DEFAULT_FORMAT_ORDER = [
   'time',
+  'activity',
   'error',
   'model',
   'approval',
@@ -238,6 +244,7 @@ function parseArgs(argv) {
     minimal: false,
     formatOrder: null,
     labelOverrides: {},
+    sound: false,
   };
 
   let showHelp = false;
@@ -295,6 +302,8 @@ function parseArgs(argv) {
       }
       options.formatOrder = parseFormatList(value);
       i += 1;
+    } else if (arg === '--sound' || arg === '-s') {
+      options.sound = true;
     } else if (arg === '--help' || arg === '-h') {
       showHelp = true;
     } else if (arg === '--version' || arg === '-v') {
@@ -319,6 +328,7 @@ Options:
   --format, -f <fields> Comma-separated field order (e.g., time,model,directory)
   --override-<field> <label>
                         Replace a field label emoji/text (e.g., --override-model=🤩)
+  --sound, -s           Play alert sound when assistant requests user input
   --version, -v         Show version information
   --help, -h            Show this message
 `;
@@ -481,6 +491,8 @@ async function readLog(filePath) {
   let lastContext = null;
   let lastTokenCount = null;
   let lastTimestamp = null;
+  let lastAssistantMessageTime = null;
+  let lastActivity = null;
 
   for await (const line of rl) {
     const trimmed = line.trim();
@@ -502,10 +514,31 @@ async function readLog(filePath) {
       lastContext = record.payload || null;
     } else if (record.type === 'event_msg' && record.payload && record.payload.type === 'token_count') {
       lastTokenCount = record.payload;
+    } else if (record.type === 'response_item' && record.payload) {
+      const payload = record.payload;
+      
+      // Track assistant messages for sound alerts
+      if (payload.role === 'assistant') {
+        if (record.timestamp) {
+          const ts = new Date(record.timestamp);
+          if (!Number.isNaN(ts.getTime())) lastAssistantMessageTime = ts;
+        }
+      }
+
+      // Track activity type for display
+      if (payload.role === 'user') {
+        lastActivity = 'user';
+      } else if (payload.role === 'assistant') {
+        lastActivity = 'assistant';
+      } else if (payload.type === 'function_call') {
+        lastActivity = 'tool';
+      } else if (payload.type === 'reasoning') {
+        lastActivity = 'thinking';
+      }
     }
   }
 
-  return { lastContext, lastTokenCount, lastTimestamp };
+  return { lastContext, lastTokenCount, lastTimestamp, lastAssistantMessageTime, lastActivity };
 }
 
 async function gatherStatuses(baseDir, limit) {
@@ -618,6 +651,23 @@ const FIELD_DEFINITIONS = {
       return null;
     },
   },
+  activity: {
+    defaultLabel: '💭',
+    build: ({ detail, minimal }) => {
+      if (minimal) return null;
+      const activity = detail.lastActivity;
+      if (!activity) return null;
+      
+      const activityMap = {
+        user: '👤',
+        assistant: '💬',
+        tool: '🔧',
+        thinking: '🤔',
+      };
+      
+      return activityMap[activity] || activity;
+    },
+  },
   directory: {
     defaultLabel: '📁',
     build: ({ context, minimal }) => {
@@ -699,8 +749,12 @@ async function runWatch(options, stdout, deps = {}) {
   const columns = () => (stdout && Number.isInteger(stdout.columns) ? stdout.columns : null);
   const gather = deps.gatherStatuses || gatherStatuses;
   const setIntervalFn = deps.setIntervalFn || setInterval;
+  const playSound = deps.playSound || playAlertSound;
 
   let running = false;
+  let lastSeenActivity = null;
+  let lastSeenTimestamp = null;
+
   async function draw() {
     if (running) return;
     running = true;
@@ -709,6 +763,27 @@ async function runWatch(options, stdout, deps = {}) {
       const summary = buildReport(status, options);
       console.clear();
       stdout.write(`${truncateToTerminal(summary, columns())}\n`);
+
+      // Check for any new activity if sound is enabled
+      if (options.sound && status.sessions && status.sessions.length > 0) {
+        const detail = status.sessions[0];
+        const currentActivity = detail.lastActivity;
+        const currentTimestamp = detail.lastTimestamp ? detail.lastTimestamp.getTime() : null;
+        
+        if (lastSeenActivity === null && lastSeenTimestamp === null) {
+          // First run, just record the state without playing sound
+          lastSeenActivity = currentActivity;
+          lastSeenTimestamp = currentTimestamp;
+        } else if (currentTimestamp && currentTimestamp > lastSeenTimestamp) {
+          // New activity detected (timestamp changed)!
+          lastSeenActivity = currentActivity;
+          lastSeenTimestamp = currentTimestamp;
+          // Only play sound for non-user activities (assistant, tool, thinking)
+          if (currentActivity !== 'user') {
+            playSound(currentActivity);
+          }
+        }
+      }
     } finally {
       running = false;
     }
@@ -766,4 +841,5 @@ module.exports = {
   compareVersions,
   truncateToTerminal,
   runWatch,
+  readLog,
 };

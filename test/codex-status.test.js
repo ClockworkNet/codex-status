@@ -7,7 +7,10 @@ const {
   parseArgs,
   ensureCodexCli,
   runWatch,
+  readLog,
 } = require('../src/codex-status');
+
+const { playAlertSound } = require('../src/sound');
 
 test('parseArgs captures format and overrides', () => {
   const { options } = parseArgs([
@@ -57,6 +60,7 @@ test('parseArgs supports flags and defaults', () => {
     minimal: false,
     formatOrder: null,
     labelOverrides: {},
+    sound: false,
   });
   assert.equal(showHelp, false);
   assert.equal(showVersion, false);
@@ -299,4 +303,173 @@ test('runWatch renders rate limit resets as time or date', async () => {
   assert.ok(weekly);
   assert.match(daily, /🕔\d+%\/\d{2}:\d{2}/);
   assert.match(weekly, /🗓\d+%\/\d{2}\/\d{2}/);
+});
+
+test('parseArgs enables sound flag', () => {
+  const { options } = parseArgs(['--sound']);
+  assert.equal(options.sound, true);
+});
+
+test('parseArgs enables sound flag with short form', () => {
+  const { options } = parseArgs(['-s']);
+  assert.equal(options.sound, true);
+});
+
+test('playAlertSound calls platform-specific command', () => {
+  const calls = [];
+  const mockSpawn = (cmd, args, opts) => {
+    calls.push({ cmd, args, opts });
+    return {
+      on: () => {},
+    };
+  };
+
+  playAlertSound('user', { spawn: mockSpawn, platform: 'darwin', tmpdir: '/tmp' });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].cmd, 'afplay');
+  assert.ok(calls[0].args[0].startsWith('/tmp/codex-beep-')); // temp file path
+  assert.ok(calls[0].args[0].endsWith('.wav'));
+});
+
+test('playAlertSound handles different platforms', () => {
+  const mockProcess = {
+    stdin: { write: () => {}, end: () => {} },
+    on: () => {},
+  };
+
+  const darwinCalls = [];
+  playAlertSound('user', {
+    spawn: (cmd, args) => { darwinCalls.push(cmd); return mockProcess; },
+    platform: 'darwin',
+    tmpdir: '/tmp',
+  });
+  assert.equal(darwinCalls[0], 'afplay');
+
+  const linuxCalls = [];
+  playAlertSound('tool', {
+    spawn: (cmd, args) => { linuxCalls.push(cmd); return mockProcess; },
+    platform: 'linux',
+    tmpdir: '/tmp',
+  });
+  assert.equal(linuxCalls[0], 'aplay'); // Linux tries aplay first
+});
+
+test('runWatch plays sound when new activity appears', async () => {
+  const fakeStdout = {
+    columns: 120,
+    writes: [],
+    write(chunk) {
+      this.writes.push(chunk);
+    },
+  };
+  const originalClear = console.clear;
+  console.clear = () => {};
+
+  const soundCalls = [];
+  const mockPlaySound = () => soundCalls.push(Date.now());
+
+  const firstTime = new Date('2025-10-27T19:47:56.258Z');
+  const secondTime = new Date('2025-10-27T20:00:00.000Z');
+
+  let callCount = 0;
+  const mockGather = async () => {
+    callCount += 1;
+    return {
+      sessions: [{
+        log: { mtime: new Date() },
+        lastContext: { model: 'gpt-test' },
+        lastActivity: callCount === 1 ? 'tool' : 'assistant',
+        lastTimestamp: callCount === 1 ? firstTime : secondTime,
+      }],
+    };
+  };
+
+  const intervals = [];
+  const mockSetInterval = (fn) => {
+    intervals.push(fn);
+  };
+
+  try {
+    await runWatch({
+      baseDir: '.',
+      interval: 5,
+      limit: 1,
+      sound: true,
+    }, fakeStdout, {
+      gatherStatuses: mockGather,
+      setIntervalFn: mockSetInterval,
+      playSound: mockPlaySound,
+    });
+
+    // First call: no sound (initial state)
+    assert.equal(soundCalls.length, 0);
+
+    // Simulate second interval call
+    await intervals[0]();
+
+    // Second call: sound should play (new activity detected)
+    assert.equal(soundCalls.length, 1);
+  } finally {
+    console.clear = originalClear;
+  }
+});
+
+test('runWatch does not play sound for user messages', async () => {
+  const fakeStdout = {
+    columns: 120,
+    writes: [],
+    write(chunk) {
+      this.writes.push(chunk);
+    },
+  };
+  const originalClear = console.clear;
+  console.clear = () => {};
+
+  const soundCalls = [];
+  const mockPlaySound = () => soundCalls.push(Date.now());
+
+  const firstTime = new Date('2025-10-27T19:47:56.258Z');
+  const secondTime = new Date('2025-10-27T20:00:00.000Z');
+
+  let callCount = 0;
+  const mockGather = async () => {
+    callCount += 1;
+    return {
+      sessions: [{
+        log: { mtime: new Date() },
+        lastContext: { model: 'gpt-test' },
+        lastActivity: callCount === 1 ? 'assistant' : 'user',
+        lastTimestamp: callCount === 1 ? firstTime : secondTime,
+      }],
+    };
+  };
+
+  const intervals = [];
+  const mockSetInterval = (fn) => {
+    intervals.push(fn);
+  };
+
+  try {
+    await runWatch({
+      baseDir: '.',
+      interval: 5,
+      limit: 1,
+      sound: true,
+    }, fakeStdout, {
+      gatherStatuses: mockGather,
+      setIntervalFn: mockSetInterval,
+      playSound: mockPlaySound,
+    });
+
+    // First call: no sound (initial state)
+    assert.equal(soundCalls.length, 0);
+
+    // Simulate second interval call (user activity)
+    await intervals[0]();
+
+    // Second call: no sound should play (user activity is excluded)
+    assert.equal(soundCalls.length, 0);
+  } finally {
+    console.clear = originalClear;
+  }
 });

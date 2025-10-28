@@ -6,6 +6,7 @@
 - Displays the most recent Codex session summary, including model, sandbox policy, rate limits, and token usage.
 - Watch mode refreshes the display on an interval without cluttering your terminal history.
 - Output automatically trims to your terminal width for clean presentation.
+- Optional sound alerts when the assistant requests user input (watch mode only).
 
 ## Output Example
 
@@ -29,6 +30,7 @@ npx codex-status --help
 codex-status             # show the most recent session summary
 codex-status --watch     # refresh every 15 seconds (default)
 codex-status --watch -n 5  # refresh every 5 seconds
+codex-status --watch --sound  # enable sound alerts when assistant requests input
 codex-status --limit 3   # display the three most recent sessions
 codex-status --base ~/custom/path  # override the rollout log directory
 codex-status --minimal   # hide policy and directory fields for tighter output
@@ -38,10 +40,33 @@ codex-status --version   # print version information
 ```
 Use `codex-status --help` for the full option list.
 
+### Sound Alerts
+Use `--sound` (or `-s`) in watch mode to enable audio notifications when any activity occurs. This helps you stay aware of Codex's progress without constantly watching the terminal.
+
+**Musical Tones:**
+- **Assistant responses**: Full ascending arpeggio through G6 major chord (12 notes: G-B-D-E across 3 octaves)
+- **Other activity** (user/tool/thinking): 2-3 random notes from the G6 major chord
+- **Audio processing**: Soft volume (15%), lowpass filtering (3kHz cutoff) for warmth, and rich ambient reverb (8 delay lines, 999ms tail) for a pleasant, non-intrusive sound
+
+**Platform Support:**
+- **macOS**: Generates WAV programmatically and plays via `afplay`
+- **Linux**: Generates WAV in-memory and plays via `aplay` (ALSA) or `paplay` (PulseAudio)
+- **Windows**: Uses PowerShell's `[console]::beep()` for tone generation
+- **Other**: Falls back to terminal bell (`\x07`)
+
+The sound is generated entirely in Node.js using Buffer manipulation (no external audio files required). The sound plays once whenever new activity is detected, not on every refresh cycle.
+
 ### Formatting and Labels
-- `--format` (or `-f`) accepts a comma-separated list of fields that defines both the order and which fields appear. Supported field names include `time`, `model`, `approval`, `sandbox`, `daily`, `weekly`, `recent`, `total`, and `directory` (aliases like `primary`, `cwd`, etc. are supported).
-- `--override-<field>=<label>` lets you replace a field’s prefix emoji/text (for example, `--override-directory=DIR:`). Provide the value inline or as the next argument.
-- Minimal mode (`--minimal`) still hides approval, sandbox, and directory fields even if requested in the custom format.
+- `--format` (or `-f`) accepts a comma-separated list of fields that defines both the order and which fields appear. Supported field names include `time`, `model`, `approval`, `sandbox`, `daily`, `weekly`, `recent`, `total`, `activity`, and `directory` (aliases like `primary`, `cwd`, `role`, etc. are supported).
+- `--override-<field>=<label>` lets you replace a field's prefix emoji/text (for example, `--override-directory=DIR:`). Provide the value inline or as the next argument.
+- Minimal mode (`--minimal`) still hides approval, sandbox, activity, and directory fields even if requested in the custom format.
+
+**Activity Field:**
+The `activity` field shows the last action taken by Codex:
+- 👤 User message
+- 💬 Assistant response
+- 🔧 Tool/function call
+- 🤔 Reasoning/thinking
 
 ## Maintenance
 1. Bump the version in `package.json`.

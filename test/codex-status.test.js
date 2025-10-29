@@ -148,6 +148,7 @@ test('runWatch outputs the same summary as single run', async () => {
         model: 'gpt-test-model',
         cwd: '/tmp/project',
       },
+      lastActivity: null,
     }],
   };
 
@@ -161,7 +162,9 @@ test('runWatch outputs the same summary as single run', async () => {
   }
 
   assert.equal(fakeStdout.writes.length >= 1, true);
-  assert.equal(fakeStdout.writes[0], '🕒now 🤖test-model 🔄n/a 📁tmp/project\n');
+  // With new default order: time, activity (null skipped), daily (n/a skipped), weekly (n/a skipped), 
+  // recent, total (null skipped), error (null skipped), model, approval (null skipped), sandbox (null skipped), directory
+  assert.equal(fakeStdout.writes[0], '🕒now 🔄n/a 🤖test-model 📁tmp/project\n');
 });
 
 test('runWatch minimal mode omits policy and directory', async () => {

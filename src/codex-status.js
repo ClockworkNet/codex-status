@@ -191,14 +191,14 @@ const FIELD_ALIASES = {
 const DEFAULT_FORMAT_ORDER = [
   'time',
   'activity',
-  'error',
-  'model',
-  'approval',
-  'sandbox',
   'daily',
   'weekly',
   'recent',
   'total',
+  'error',
+  'model',
+  'approval',
+  'sandbox',
   'directory',
 ];
 
@@ -705,7 +705,7 @@ const FIELD_DEFINITIONS = {
       
       const activityMap = {
         user: '👤',
-        assistant: '💬',
+        assistant: '⁉️',
         tool: '🔧',
         thinking: '🤔',
       };

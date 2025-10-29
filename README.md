@@ -41,12 +41,31 @@ codex-status --version   # print version information
 Use `codex-status --help` for the full option list.
 
 ### Sound Alerts
-Use `--sound` (or `-s`) in watch mode to enable audio notifications when any activity occurs. This helps you stay aware of Codex's progress without constantly watching the terminal.
+Use `--sound` (or `-s`) in watch mode to enable audio notifications when activity occurs. This helps you stay aware of Codex's progress without constantly watching the terminal.
+
+**Sound Modes:**
+- `--sound` or `-s` (default: **some**): Plays sound every other refresh for non-user activity (assistant, tool, thinking)
+- `--sound=all`: Plays sound on every refresh for all non-user activity
+- `--sound=some`: Plays sound every other refresh for non-user activity (default)
+- `--sound=assistant`: Plays sound only for assistant messages
+
+**Sound Customization:**
+- `--sound-volume <1-100>`: Set volume level (1=quietest, 100=loudest, default: 100)
+- `--sound-reverb <type>`: Set reverb effect (options: `none`, `subtle`, `default`, `lush`, default: `default`)
+
+Examples:
+```bash
+codex-status --watch --sound --sound-volume=50  # enable sounds at half volume
+codex-status --watch -s assistant --sound-reverb=lush  # assistant-only with lush reverb
+codex-status --watch --sound=all --sound-volume=30 --sound-reverb=subtle  # quiet, minimal reverb
+```
 
 **Musical Tones:**
-- **Assistant responses**: Full ascending arpeggio through G6 major chord (12 notes: G-B-D-E across 3 octaves)
-- **Other activity** (user/tool/thinking): 2-3 random notes from the G6 major chord
-- **Audio processing**: Soft volume (15%), lowpass filtering (3kHz cutoff) for warmth, and rich ambient reverb (8 delay lines, 999ms tail) for a pleasant, non-intrusive sound
+- **Assistant responses**: Full ascending arpeggio through G6 major chord (9 notes: G-B-D-E across 3 octaves)
+- **Other activity** (tool/thinking):
+  - **some mode**: 2 random notes descending (high to low)
+  - **all mode**: 3-4 random notes descending (high to low)
+- **Audio processing**: Adjustable volume, lowpass filtering (3kHz cutoff) for warmth, and configurable reverb for a pleasant, non-intrusive sound
 
 **Platform Support:**
 - **macOS**: Generates WAV programmatically and plays via `afplay`
@@ -54,7 +73,7 @@ Use `--sound` (or `-s`) in watch mode to enable audio notifications when any act
 - **Windows**: Uses PowerShell's `[console]::beep()` for tone generation
 - **Other**: Falls back to terminal bell (`\x07`)
 
-The sound is generated entirely in Node.js using Buffer manipulation (no external audio files required). The sound plays once whenever new activity is detected, not on every refresh cycle.
+The sound is generated entirely in Node.js using Buffer manipulation (no external audio files required). User messages never trigger sounds.
 
 ### Formatting and Labels
 - `--format` (or `-f`) accepts a comma-separated list of fields that defines both the order and which fields appear. Supported field names include `time`, `model`, `approval`, `sandbox`, `daily`, `weekly`, `recent`, `total`, `activity`, and `directory` (aliases like `primary`, `cwd`, `role`, etc. are supported).

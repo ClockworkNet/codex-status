@@ -244,7 +244,9 @@ function parseArgs(argv) {
     minimal: false,
     formatOrder: null,
     labelOverrides: {},
-    sound: false,
+    sound: 'off',
+    soundVolume: 100,
+    soundReverb: 'default',
   };
 
   let showHelp = false;
@@ -302,8 +304,46 @@ function parseArgs(argv) {
       }
       options.formatOrder = parseFormatList(value);
       i += 1;
+    } else if (arg.startsWith('--sound=')) {
+      const value = arg.slice('--sound='.length);
+      if (!['all', 'some', 'assistant'].includes(value)) {
+        throw new Error('Sound mode must be one of: all, some, assistant');
+      }
+      options.sound = value;
     } else if (arg === '--sound' || arg === '-s') {
-      options.sound = true;
+      const nextArg = argv[i + 1];
+      if (nextArg && ['all', 'some', 'assistant'].includes(nextArg)) {
+        options.sound = nextArg;
+        i += 1;
+      } else {
+        options.sound = 'some';
+      }
+    } else if (arg.startsWith('--sound-volume=')) {
+      const value = Number(arg.slice('--sound-volume='.length));
+      if (!Number.isInteger(value) || value < 1 || value > 100) {
+        throw new Error('Sound volume must be an integer between 1 and 100');
+      }
+      options.soundVolume = value;
+    } else if (arg === '--sound-volume') {
+      const value = Number(argv[i + 1]);
+      if (!Number.isInteger(value) || value < 1 || value > 100) {
+        throw new Error('Sound volume must be an integer between 1 and 100');
+      }
+      options.soundVolume = value;
+      i += 1;
+    } else if (arg.startsWith('--sound-reverb=')) {
+      const value = arg.slice('--sound-reverb='.length);
+      if (!['none', 'subtle', 'default', 'lush'].includes(value)) {
+        throw new Error('Sound reverb must be one of: none, subtle, default, lush');
+      }
+      options.soundReverb = value;
+    } else if (arg === '--sound-reverb') {
+      const value = argv[i + 1];
+      if (!value || !['none', 'subtle', 'default', 'lush'].includes(value)) {
+        throw new Error('Sound reverb must be one of: none, subtle, default, lush');
+      }
+      options.soundReverb = value;
+      i += 1;
     } else if (arg === '--help' || arg === '-h') {
       showHelp = true;
     } else if (arg === '--version' || arg === '-v') {
@@ -328,7 +368,12 @@ Options:
   --format, -f <fields> Comma-separated field order (e.g., time,model,directory)
   --override-<field> <label>
                         Replace a field label emoji/text (e.g., --override-model=🤩)
-  --sound, -s           Play alert sound when assistant requests user input
+  --sound, -s [mode]    Play alert sounds in watch mode (modes: all, some, assistant)
+                        Default: some when -s is used without value
+  --sound-volume <1-100>
+                        Set sound volume (1=quiet, 100=max, default: 100)
+  --sound-reverb <type> Set reverb effect (none, subtle, default, lush)
+                        Default: default
   --version, -v         Show version information
   --help, -h            Show this message
 `;
@@ -754,6 +799,7 @@ async function runWatch(options, stdout, deps = {}) {
   let running = false;
   let lastSeenActivity = null;
   let lastSeenTimestamp = null;
+  let lastRefreshCount = 0;
 
   async function draw() {
     if (running) return;
@@ -765,7 +811,7 @@ async function runWatch(options, stdout, deps = {}) {
       stdout.write(`${truncateToTerminal(summary, columns())}\n`);
 
       // Check for any new activity if sound is enabled
-      if (options.sound && status.sessions && status.sessions.length > 0) {
+      if (options.sound !== 'off' && status.sessions && status.sessions.length > 0) {
         const detail = status.sessions[0];
         const currentActivity = detail.lastActivity;
         const currentTimestamp = detail.lastTimestamp ? detail.lastTimestamp.getTime() : null;
@@ -778,9 +824,24 @@ async function runWatch(options, stdout, deps = {}) {
           // New activity detected (timestamp changed)!
           lastSeenActivity = currentActivity;
           lastSeenTimestamp = currentTimestamp;
-          // Only play sound for non-user activities (assistant, tool, thinking)
-          if (currentActivity !== 'user') {
-            playSound(currentActivity);
+          lastRefreshCount += 1;
+
+          // Determine if we should play sound based on mode and activity
+          let shouldPlay = false;
+          
+          if (options.sound === 'assistant') {
+            // Only play for assistant messages
+            shouldPlay = currentActivity === 'assistant';
+          } else if (options.sound === 'some') {
+            // Play every other refresh, skip user messages
+            shouldPlay = currentActivity !== 'user' && (lastRefreshCount % 2 === 1);
+          } else if (options.sound === 'all') {
+            // Play for all non-user activities
+            shouldPlay = currentActivity !== 'user';
+          }
+
+          if (shouldPlay) {
+            playSound(currentActivity, options.sound, options.soundVolume, options.soundReverb);
           }
         }
       }

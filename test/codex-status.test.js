@@ -60,7 +60,9 @@ test('parseArgs supports flags and defaults', () => {
     minimal: false,
     formatOrder: null,
     labelOverrides: {},
-    sound: false,
+    sound: 'off',
+    soundVolume: 100,
+    soundReverb: 'default',
   });
   assert.equal(showHelp, false);
   assert.equal(showVersion, false);
@@ -307,12 +309,84 @@ test('runWatch renders rate limit resets as time or date', async () => {
 
 test('parseArgs enables sound flag', () => {
   const { options } = parseArgs(['--sound']);
-  assert.equal(options.sound, true);
+  assert.equal(options.sound, 'some');
 });
 
 test('parseArgs enables sound flag with short form', () => {
   const { options } = parseArgs(['-s']);
-  assert.equal(options.sound, true);
+  assert.equal(options.sound, 'some');
+});
+
+test('parseArgs accepts sound mode values', () => {
+  const { options: opt1 } = parseArgs(['--sound=all']);
+  assert.equal(opt1.sound, 'all');
+  
+  const { options: opt2 } = parseArgs(['--sound=some']);
+  assert.equal(opt2.sound, 'some');
+  
+  const { options: opt3 } = parseArgs(['--sound=assistant']);
+  assert.equal(opt3.sound, 'assistant');
+  
+  const { options: opt4 } = parseArgs(['--sound', 'some']);
+  assert.equal(opt4.sound, 'some');
+});
+
+test('parseArgs rejects invalid sound modes', () => {
+  assert.throws(() => {
+    parseArgs(['--sound=invalid']);
+  }, /Sound mode must be one of: all, some, assistant/);
+});
+
+test('parseArgs accepts sound volume', () => {
+  const { options: opt1 } = parseArgs(['--sound-volume=50']);
+  assert.equal(opt1.soundVolume, 50);
+  
+  const { options: opt2 } = parseArgs(['--sound-volume', '75']);
+  assert.equal(opt2.soundVolume, 75);
+  
+  const { options: opt3 } = parseArgs(['--sound-volume=1']);
+  assert.equal(opt3.soundVolume, 1);
+  
+  const { options: opt4 } = parseArgs(['--sound-volume=100']);
+  assert.equal(opt4.soundVolume, 100);
+});
+
+test('parseArgs rejects invalid sound volume', () => {
+  assert.throws(() => {
+    parseArgs(['--sound-volume=0']);
+  }, /Sound volume must be an integer between 1 and 100/);
+  
+  assert.throws(() => {
+    parseArgs(['--sound-volume=101']);
+  }, /Sound volume must be an integer between 1 and 100/);
+  
+  assert.throws(() => {
+    parseArgs(['--sound-volume=50.5']);
+  }, /Sound volume must be an integer between 1 and 100/);
+});
+
+test('parseArgs accepts sound reverb', () => {
+  const { options: opt1 } = parseArgs(['--sound-reverb=none']);
+  assert.equal(opt1.soundReverb, 'none');
+  
+  const { options: opt2 } = parseArgs(['--sound-reverb', 'subtle']);
+  assert.equal(opt2.soundReverb, 'subtle');
+  
+  const { options: opt3 } = parseArgs(['--sound-reverb=default']);
+  assert.equal(opt3.soundReverb, 'default');
+  
+  const { options: opt4 } = parseArgs(['--sound-reverb', 'lush']);
+  assert.equal(opt4.soundReverb, 'lush');
+});
+
+test('parseArgs rejects invalid sound reverb', () => {
+  assert.throws(() => {
+    parseArgs(['--sound-reverb=invalid']);
+  }, /Sound reverb must be one of: none, subtle, default, lush/);
+  
+  assert.throws(() => {
+    parseArgs(['--sound-reverb', 'wrong']);
+  }, /Sound reverb must be one of: none, subtle, default, lush/);
 });
 
 test('playAlertSound calls platform-specific command', () => {
@@ -324,7 +398,7 @@ test('playAlertSound calls platform-specific command', () => {
     };
   };
 
-  playAlertSound('user', { spawn: mockSpawn, platform: 'darwin', tmpdir: '/tmp' });
+  playAlertSound('user', 'all', 100, 'default', { spawn: mockSpawn, platform: 'darwin', tmpdir: '/tmp' });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].cmd, 'afplay');
   assert.ok(calls[0].args[0].startsWith('/tmp/codex-beep-')); // temp file path
@@ -338,7 +412,7 @@ test('playAlertSound handles different platforms', () => {
   };
 
   const darwinCalls = [];
-  playAlertSound('user', {
+  playAlertSound('user', 'all', 100, 'default', {
     spawn: (cmd, args) => { darwinCalls.push(cmd); return mockProcess; },
     platform: 'darwin',
     tmpdir: '/tmp',
@@ -346,7 +420,7 @@ test('playAlertSound handles different platforms', () => {
   assert.equal(darwinCalls[0], 'afplay');
 
   const linuxCalls = [];
-  playAlertSound('tool', {
+  playAlertSound('tool', 'all', 100, 'default', {
     spawn: (cmd, args) => { linuxCalls.push(cmd); return mockProcess; },
     platform: 'linux',
     tmpdir: '/tmp',
@@ -394,7 +468,7 @@ test('runWatch plays sound when new activity appears', async () => {
       baseDir: '.',
       interval: 5,
       limit: 1,
-      sound: true,
+      sound: 'all',
     }, fakeStdout, {
       gatherStatuses: mockGather,
       setIntervalFn: mockSetInterval,
@@ -454,7 +528,7 @@ test('runWatch does not play sound for user messages', async () => {
       baseDir: '.',
       interval: 5,
       limit: 1,
-      sound: true,
+      sound: 'all',
     }, fakeStdout, {
       gatherStatuses: mockGather,
       setIntervalFn: mockSetInterval,
@@ -469,6 +543,149 @@ test('runWatch does not play sound for user messages', async () => {
 
     // Second call: no sound should play (user activity is excluded)
     assert.equal(soundCalls.length, 0);
+  } finally {
+    console.clear = originalClear;
+  }
+});
+
+test('runWatch assistant mode only plays for assistant messages', async () => {
+  const fakeStdout = {
+    columns: 120,
+    writes: [],
+    write(chunk) {
+      this.writes.push(chunk);
+    },
+  };
+  const originalClear = console.clear;
+  console.clear = () => {};
+
+  const soundCalls = [];
+  const mockPlaySound = () => soundCalls.push(Date.now());
+
+  const times = [
+    new Date('2025-10-27T19:47:56.258Z'),
+    new Date('2025-10-27T20:00:00.000Z'),
+    new Date('2025-10-27T20:01:00.000Z'),
+    new Date('2025-10-27T20:02:00.000Z'),
+  ];
+
+  let callCount = 0;
+  const activities = ['assistant', 'tool', 'assistant', 'thinking'];
+  const mockGather = async () => {
+    const idx = callCount;
+    callCount += 1;
+    return {
+      sessions: [{
+        log: { mtime: new Date() },
+        lastContext: { model: 'gpt-test' },
+        lastActivity: activities[idx],
+        lastTimestamp: times[idx],
+      }],
+    };
+  };
+
+  const intervals = [];
+  const mockSetInterval = (fn) => {
+    intervals.push(fn);
+  };
+
+  try {
+    await runWatch({
+      baseDir: '.',
+      interval: 5,
+      limit: 1,
+      sound: 'assistant',
+    }, fakeStdout, {
+      gatherStatuses: mockGather,
+      setIntervalFn: mockSetInterval,
+      playSound: mockPlaySound,
+    });
+
+    // First call: no sound (initial state, assistant activity)
+    assert.equal(soundCalls.length, 0);
+
+    // Second call: tool activity - no sound in assistant mode
+    await intervals[0]();
+    assert.equal(soundCalls.length, 0);
+
+    // Third call: assistant activity - sound should play
+    await intervals[0]();
+    assert.equal(soundCalls.length, 1);
+
+    // Fourth call: thinking activity - no sound in assistant mode
+    await intervals[0]();
+    assert.equal(soundCalls.length, 1);
+  } finally {
+    console.clear = originalClear;
+  }
+});
+
+test('runWatch some mode plays every other refresh', async () => {
+  const fakeStdout = {
+    columns: 120,
+    writes: [],
+    write(chunk) {
+      this.writes.push(chunk);
+    },
+  };
+  const originalClear = console.clear;
+  console.clear = () => {};
+
+  const soundCalls = [];
+  const mockPlaySound = () => soundCalls.push(Date.now());
+
+  const times = [
+    new Date('2025-10-27T19:47:56.258Z'),
+    new Date('2025-10-27T20:00:00.000Z'),
+    new Date('2025-10-27T20:01:00.000Z'),
+    new Date('2025-10-27T20:02:00.000Z'),
+  ];
+
+  let callCount = 0;
+  const mockGather = async () => {
+    const idx = callCount;
+    callCount += 1;
+    return {
+      sessions: [{
+        log: { mtime: new Date() },
+        lastContext: { model: 'gpt-test' },
+        lastActivity: 'tool',
+        lastTimestamp: times[idx],
+      }],
+    };
+  };
+
+  const intervals = [];
+  const mockSetInterval = (fn) => {
+    intervals.push(fn);
+  };
+
+  try {
+    await runWatch({
+      baseDir: '.',
+      interval: 5,
+      limit: 1,
+      sound: 'some',
+    }, fakeStdout, {
+      gatherStatuses: mockGather,
+      setIntervalFn: mockSetInterval,
+      playSound: mockPlaySound,
+    });
+
+    // First call: no sound (initial state)
+    assert.equal(soundCalls.length, 0);
+
+    // Second call (refresh 1): sound should play (odd refresh)
+    await intervals[0]();
+    assert.equal(soundCalls.length, 1);
+
+    // Third call (refresh 2): no sound (even refresh)
+    await intervals[0]();
+    assert.equal(soundCalls.length, 1);
+
+    // Fourth call (refresh 3): sound should play (odd refresh)
+    await intervals[0]();
+    assert.equal(soundCalls.length, 2);
   } finally {
     console.clear = originalClear;
   }

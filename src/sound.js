@@ -3,8 +3,11 @@ const path = require('path');
 const os = require('os');
 const { spawn, spawnSync } = require('child_process');
 
-function generateBeepWav(frequency = 800, durationMs = 200, sampleRate = 8000, volume = 0.15) {
+function generateBeepWav(frequency = 800, durationMs = 200, sampleRate = 8000, volumePercent = 100) {
   const numSamples = Math.floor(sampleRate * durationMs / 1000);
+  
+  // Scale volume: 1-100 maps to 0.0015-0.15 (15% max of full scale)
+  const volume = Math.max(1, Math.min(100, volumePercent)) * 0.0015;
   
   // WAV file header (44 bytes)
   const header = Buffer.alloc(44);
@@ -39,7 +42,6 @@ function generateBeepWav(frequency = 800, durationMs = 200, sampleRate = 8000, v
       amplitude = (numSamples - i) / fadeLength;
     }
     
-    // Softer volume (0.3 default instead of 0.9)
     const sample = Math.sin(2 * Math.PI * frequency * t) * amplitude * 32767 * volume;
     samples.writeInt16LE(Math.round(sample), i * 2);
   }
@@ -70,27 +72,87 @@ function applyLowpassFilter(audioSamples, cutoffFreq = 3000, sampleRate = 8000) 
   return output;
 }
 
-function applyReverb(audioSamples, sampleRate = 8000) {
-  // Enhanced reverb with multiple echoes and longer tail
+// Reverb preset configurations
+const REVERB_PRESETS = {
+  none: null,  // No reverb - dry signal only
+  subtle: {
+    tailSeconds: 0.5,
+    numDelays: 3,
+    wetMix: 0.3,
+    dryMix: 0.5,
+    feedbackGain: 0.15,
+  },
+  default: {
+    tailSeconds: 1.5,
+    numDelays: 5,
+    wetMix: 0.5,
+    dryMix: 0.3,
+    feedbackGain: 0.3,
+  },
+  lush: {
+    tailSeconds: 3.0,
+    numDelays: 9,
+    wetMix: 0.7,
+    dryMix: 0.2,
+    feedbackGain: 0.5,
+  },
+};
+
+function applyReverb(audioSamples, sampleRate = 8000, options = {}) {
+  // If a preset name is provided, use it; otherwise use custom options or defaults
+  let reverbConfig;
+  if (typeof options === 'string' && options in REVERB_PRESETS) {
+    reverbConfig = REVERB_PRESETS[options];
+    // If preset is 'none', return audio unchanged
+    if (reverbConfig === null) return audioSamples;
+  } else if (typeof options === 'object') {
+    const preset = options.preset && REVERB_PRESETS[options.preset];
+    // If preset is 'none', return audio unchanged
+    if (preset === null) return audioSamples;
+    
+    reverbConfig = {
+      tailSeconds: options.tailSeconds ?? preset?.tailSeconds ?? 1.5,
+      numDelays: options.numDelays ?? preset?.numDelays ?? 5,
+      wetMix: options.wetMix ?? preset?.wetMix ?? 0.5,
+      dryMix: options.dryMix ?? preset?.dryMix ?? 0.3,
+      feedbackGain: options.feedbackGain ?? preset?.feedbackGain ?? 0.3,
+    };
+  } else {
+    reverbConfig = REVERB_PRESETS.default;
+  }
+  
+  const {
+    tailSeconds,
+    numDelays,
+    wetMix,
+    dryMix,
+    feedbackGain,
+  } = reverbConfig;
+  
   const numSamples = audioSamples.length / 2;
   
-  // Add extra space for reverb tail (999ms)
-  const tailSamples = Math.floor(sampleRate * 5);
+  // Add extra space for reverb tail
+  const tailSamples = Math.floor(sampleRate * tailSeconds);
   const totalSamples = numSamples + tailSamples;
   const output = Buffer.alloc(totalSamples * 2);
   
-  // Multiple delay lines with different lengths (in samples) 
-  const delays = [
-    { time: Math.floor(sampleRate * 0.323), gain: 0.1 }, // ~323ms
-    // { time: Math.floor(sampleRate * 0.359), gain: 0.35 }, // ~359ms
-    { time: Math.floor(sampleRate * 0.397), gain: 0.06 }, // ~397ms
-    // { time: Math.floor(sampleRate * 0.437), gain: 0.04 }, // ~437ms
-    { time: Math.floor(sampleRate * 0.479), gain: 0.02 }, // ~479ms
-    // { time: Math.floor(sampleRate * 0.523), gain: 0.01 }, // ~523ms
-    { time: Math.floor(sampleRate * 0.569), gain: 0.005 }, // ~569ms
-    // { time: Math.floor(sampleRate * 0.617), gain: 0.0025 }, // ~617ms
-    { time: Math.floor(sampleRate * 0.667), gain: 0.00125 }, // ~667ms
+  // Predefined delay times in seconds (prime numbers for less resonance)
+  const baseDelayTimes = [
+    0.323, 0.359, 0.397, 0.437, 0.479, 0.523, 0.569, 0.617, 0.667
   ];
+  
+  // Select the specified number of delay lines
+  const selectedDelayTimes = baseDelayTimes.slice(0, Math.max(1, Math.min(9, numDelays)));
+  
+  // Generate delay configuration with exponential decay
+  const delays = selectedDelayTimes.map((time, idx) => {
+    // Exponential decay: first delays are louder
+    const gain = 0.1 * Math.pow(0.6, idx);
+    return {
+      time: Math.floor(sampleRate * time),
+      gain,
+    };
+  });
   
   // Process each sample
   for (let i = 0; i < totalSamples; i += 1) {
@@ -109,20 +171,20 @@ function applyReverb(audioSamples, sampleRate = 8000) {
         // Also add feedback from previous output for longer tail
         if (echoIdx < i) {
           const feedbackSample = output.readInt16LE(echoIdx * 2);
-          wetSignal += feedbackSample * delay.gain * 0.3;
+          wetSignal += feedbackSample * delay.gain * feedbackGain;
         }
       }
     }
     
-    // Mix dry (50%) and wet (50%) signals - more reverb!
-    const mixed = drySignal * 0.3 + wetSignal * 0.5;
+    // Mix dry and wet signals
+    const mixed = drySignal * dryMix + wetSignal * wetMix;
     output.writeInt16LE(Math.round(Math.max(-32767, Math.min(32767, mixed))), i * 2);
   }
   
   return output;
 }
 
-function generateMultiToneBeep(frequencies, noteDuration = 180, withReverb = true) {
+function generateMultiToneBeep(frequencies, noteDuration = 180, reverbOptions = 'default') {
   // Generate a sequence of tones
   const beeps = frequencies.map(freq => generateBeepWav(freq, noteDuration));
   
@@ -138,8 +200,10 @@ function generateMultiToneBeep(frequencies, noteDuration = 180, withReverb = tru
   // Apply lowpass filter to smooth high frequencies
   const filteredSamples = applyLowpassFilter(combinedSamples, 3000);
   
-  // Apply reverb if requested
-  const finalSamples = withReverb ? applyReverb(filteredSamples) : filteredSamples;
+  // Apply reverb (supports preset strings, options objects, false, or 'none' to disable)
+  const finalSamples = (reverbOptions === false || reverbOptions === 'none')
+    ? filteredSamples 
+    : applyReverb(filteredSamples, 8000, reverbOptions);
   
   // Create new header for combined length
   const header = Buffer.alloc(44);
@@ -179,7 +243,12 @@ function getG6MajorChordFrequencies() {
   };
 }
 
-function generateG6ChordBeep(isAssistant = false) {
+// Cache for pre-generated audio buffers
+let preGeneratedSounds = null;
+
+function initializePreGeneratedSounds(volumePercent = 100) {
+  if (preGeneratedSounds) return; // Already initialized
+  
   const freqs = getG6MajorChordFrequencies();
   const allNotes = [
     freqs.G4, freqs.B4, freqs.D5, freqs.E5,
@@ -187,39 +256,116 @@ function generateG6ChordBeep(isAssistant = false) {
     freqs.G6
   ];
   
-  if (isAssistant) {
-    // Assistant: ascending arpeggio through all notes (120ms per note)
-    return generateMultiToneBeep(allNotes, 120);
-  }
+  // Pre-generate individual note buffers (180ms duration for non-assistant)
+  const noteBuffers = allNotes.map(freq => {
+    const beep = generateBeepWav(freq, 180, 8000, volumePercent);
+    // Extract just the audio samples (skip header)
+    return beep.slice(44);
+  });
   
-  // Random selection: pick 2-3 random notes
-  const count = 3 + Math.floor(Math.random() * 2); // 3 or 4 notes
-  const selected = [];
-  const available = [...allNotes];
+  // Pre-generate assistant note buffers (120ms per note)
+  const assistantNoteBuffers = allNotes.map(freq => {
+    const beep = generateBeepWav(freq, 120, 8000, volumePercent);
+    // Extract just the audio samples (skip header)
+    return beep.slice(44);
+  });
   
-  for (let i = 0; i < count; i += 1) {
-    const idx = Math.floor(Math.random() * available.length);
-    selected.push(available[idx]);
-    available.splice(idx, 1);
-  }
-  
-  // Sort selected notes ascending
-  selected.sort((a, b) => a - b);
-  
-  return generateMultiToneBeep(selected, 180);
+  preGeneratedSounds = {
+    noteBuffers,
+    assistantNoteBuffers,
+    noteFrequencies: allNotes,
+  };
 }
 
-function playAlertSound(activityType, overrides = {}) {
+function generateG6ChordBeep(activityType, soundMode = 'all', volumePercent = 100, reverbOptions = 'default') {
+  // Lazy initialization - only generate sounds when first needed
+  initializePreGeneratedSounds(volumePercent);
+  
+  const isAssistant = activityType === 'assistant';
+  
+  if (isAssistant) {
+    // Generate assistant sound with specified reverb
+    const combinedSamples = Buffer.concat(preGeneratedSounds.assistantNoteBuffers);
+    const filteredSamples = applyLowpassFilter(combinedSamples, 3000);
+    const finalSamples = (reverbOptions === false || reverbOptions === 'none')
+      ? filteredSamples
+      : applyReverb(filteredSamples, 8000, reverbOptions);
+    
+    // Create WAV with header
+    const header = Buffer.alloc(44);
+    header.write('RIFF', 0);
+    header.writeUInt32LE(36 + finalSamples.length, 4);
+    header.write('WAVE', 8);
+    header.write('fmt ', 12);
+    header.writeUInt32LE(16, 16);
+    header.writeUInt16LE(1, 20);
+    header.writeUInt16LE(1, 22);
+    header.writeUInt32LE(8000, 24);
+    header.writeUInt32LE(16000, 28);
+    header.writeUInt16LE(2, 32);
+    header.writeUInt16LE(16, 34);
+    header.write('data', 36);
+    header.writeUInt32LE(finalSamples.length, 40);
+    
+    return Buffer.concat([header, finalSamples]);
+  }
+  
+  // Non-assistant sounds: select random notes and combine them
+  const noteCount = soundMode === 'some' ? 2 : 3 + Math.floor(Math.random() * 2);
+  const availableIndices = Array.from({ length: preGeneratedSounds.noteBuffers.length }, (_, i) => i);
+  const selectedIndices = [];
+  
+  // Pick random note indices
+  for (let i = 0; i < noteCount; i += 1) {
+    const idx = Math.floor(Math.random() * availableIndices.length);
+    selectedIndices.push(availableIndices[idx]);
+    availableIndices.splice(idx, 1);
+  }
+  
+  // Sort indices by frequency (descending - high to low)
+  selectedIndices.sort((a, b) => 
+    preGeneratedSounds.noteFrequencies[b] - preGeneratedSounds.noteFrequencies[a]
+  );
+  
+  // Concatenate selected note buffers
+  const selectedBuffers = selectedIndices.map(idx => preGeneratedSounds.noteBuffers[idx]);
+  const combinedSamples = Buffer.concat(selectedBuffers);
+  
+  // Apply processing
+  const filteredSamples = applyLowpassFilter(combinedSamples, 3000);
+  const finalSamples = (reverbOptions === false || reverbOptions === 'none')
+    ? filteredSamples
+    : applyReverb(filteredSamples, 8000, reverbOptions);
+  
+  // Create WAV with header
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0);
+  header.writeUInt32LE(36 + finalSamples.length, 4);
+  header.write('WAVE', 8);
+  header.write('fmt ', 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(8000, 24);
+  header.writeUInt32LE(16000, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write('data', 36);
+  header.writeUInt32LE(finalSamples.length, 40);
+  
+  return Buffer.concat([header, finalSamples]);
+}
+
+function playAlertSound(activityType, soundMode = 'all', volumePercent = 100, reverbOptions = 'default', overrides = {}) {
   const useSpawn = overrides.spawn || spawn;
   const platform = overrides.platform || os.platform();
   const tmpdir = overrides.tmpdir || os.tmpdir();
-  const isAssistant = activityType === 'assistant';
 
   try {
     if (platform === 'darwin') {
       // macOS: afplay requires a file, can't read from stdin
       // Write to temp file and play it
-      const wav = generateG6ChordBeep(isAssistant);
+      const wav = generateG6ChordBeep(activityType, soundMode, volumePercent, reverbOptions);
       const tmpFile = path.join(tmpdir, `codex-beep-${Date.now()}.wav`);
       fs.writeFileSync(tmpFile, wav);
       const player = useSpawn('afplay', [tmpFile], {
@@ -235,7 +381,7 @@ function playAlertSound(activityType, overrides = {}) {
       });
     } else if (platform === 'linux') {
       // Linux: aplay and paplay support stdin
-      const wav = generateG6ChordBeep(isAssistant);
+      const wav = generateG6ChordBeep(activityType, soundMode, volumePercent, reverbOptions);
       const player = useSpawn('aplay', ['-q', '-'], {
         stdio: ['pipe', 'ignore', 'ignore'],
       });
@@ -276,5 +422,6 @@ module.exports = {
   getG6MajorChordFrequencies,
   generateG6ChordBeep,
   playAlertSound,
+  REVERB_PRESETS,
 };
 

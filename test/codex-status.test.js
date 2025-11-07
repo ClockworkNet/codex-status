@@ -1,5 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { EventEmitter } = require('node:events');
 
 const {
   compareVersions,
@@ -11,6 +15,22 @@ const {
 } = require('../src/codex-status');
 
 const { playAlertSound } = require('../src/sound');
+
+function createMockStdin({ isTTY = false } = {}) {
+  const stream = new EventEmitter();
+  stream.isTTY = isTTY;
+  stream.setRawMode = () => {};
+  stream.resume = () => {};
+  stream.pause = () => {};
+  return stream;
+}
+
+function createMockProcess() {
+  return {
+    once: () => {},
+    exit: () => {},
+  };
+}
 
 test('parseArgs captures format and overrides', () => {
   const { options } = parseArgs([
@@ -153,17 +173,18 @@ test('runWatch outputs the same summary as single run', async () => {
   };
 
   try {
-    await runWatch({ baseDir: '.', interval: 5, limit: 1 }, fakeStdout, {
+    await runWatch({ baseDir: '.', interval: 5, limit: 1, sound: 'off' }, fakeStdout, {
       gatherStatuses: async () => status,
       setIntervalFn: () => {},
+      stdin: createMockStdin(),
+      processObject: createMockProcess(),
     });
   } finally {
     console.clear = originalClear;
   }
 
   assert.equal(fakeStdout.writes.length >= 1, true);
-  // With new default order: time, activity (null skipped), daily (n/a skipped), weekly (n/a skipped), 
-  // recent, total (null skipped), error (null skipped), model, approval (null skipped), sandbox (null skipped), directory
+  // Default order now begins with optional sound field; it's omitted when sound is off.
   assert.equal(fakeStdout.writes[0], '🕒now 🔄n/a 🤖test-model 📁tmp/project\n');
 });
 
@@ -190,9 +211,11 @@ test('runWatch minimal mode omits policy and directory', async () => {
   };
 
   try {
-    await runWatch({ baseDir: '.', interval: 5, limit: 1, minimal: true }, fakeStdout, {
+    await runWatch({ baseDir: '.', interval: 5, limit: 1, minimal: true, sound: 'off' }, fakeStdout, {
       gatherStatuses: async () => status,
       setIntervalFn: () => {},
+      stdin: createMockStdin(),
+      processObject: createMockProcess(),
     });
   } finally {
     console.clear = originalClear;
@@ -200,6 +223,8 @@ test('runWatch minimal mode omits policy and directory', async () => {
 
   assert.equal(fakeStdout.writes.length >= 1, true);
   const output = fakeStdout.writes[0];
+  assert.ok(!output.includes('🔊'));
+  assert.ok(!output.includes('🔇'));
   assert.ok(!output.includes('🛂'));
   assert.ok(!output.includes('🧪'));
   assert.ok(!output.includes('📁'));
@@ -237,9 +262,12 @@ test('runWatch respects custom format and labels', async () => {
       limit: 1,
       formatOrder: ['recent', 'model', 'directory'],
       labelOverrides: { recent: '++', model: '', directory: 'DIR:' },
+      sound: 'off',
     }, fakeStdout, {
       gatherStatuses: async () => status,
       setIntervalFn: () => {},
+      stdin: createMockStdin(),
+      processObject: createMockProcess(),
     });
   } finally {
     console.clear = originalClear;
@@ -247,9 +275,55 @@ test('runWatch respects custom format and labels', async () => {
 
   assert.equal(fakeStdout.writes.length >= 1, true);
   const output = fakeStdout.writes[0];
+  assert.ok(!output.startsWith('🔊 '));
+  assert.ok(!output.startsWith('🔇 '));
   assert.ok(output.startsWith('++1.2K'));
   assert.ok(output.includes('test-model'));
   assert.ok(output.includes('DIR:tmp/project'));
+});
+
+test('runWatch custom format can omit sound indicator even when enabled', async () => {
+  const fakeStdout = {
+    columns: 120,
+    writes: [],
+    write(chunk) {
+      this.writes.push(chunk);
+    },
+  };
+  const originalClear = console.clear;
+  console.clear = () => {};
+  const status = {
+    sessions: [{
+      log: { mtime: new Date() },
+      lastContext: {
+        model: 'gpt-test-model',
+        cwd: '/tmp/project',
+      },
+    }],
+  };
+
+  try {
+    await runWatch({
+      baseDir: '.',
+      interval: 5,
+      limit: 1,
+      formatOrder: ['model', 'directory'],
+      sound: 'some',
+    }, fakeStdout, {
+      gatherStatuses: async () => status,
+      setIntervalFn: () => {},
+      stdin: createMockStdin({ isTTY: true }),
+      processObject: createMockProcess(),
+    });
+  } finally {
+    console.clear = originalClear;
+  }
+
+  assert.equal(fakeStdout.writes.length >= 1, true);
+  const output = fakeStdout.writes[0];
+  assert.ok(output.startsWith('🤖test-model'));
+  assert.ok(!output.includes('🔊'));
+  assert.ok(!output.includes('🔇'));
 });
 
 test('runWatch renders rate limit resets as time or date', async () => {
@@ -290,9 +364,12 @@ test('runWatch renders rate limit resets as time or date', async () => {
       interval: 5,
       limit: 1,
       formatOrder: ['daily', 'weekly'],
+      sound: 'off',
     }, fakeStdout, {
       gatherStatuses: async () => status,
       setIntervalFn: () => {},
+      stdin: createMockStdin(),
+      processObject: createMockProcess(),
     });
   } finally {
     console.clear = originalClear;
@@ -392,6 +469,103 @@ test('parseArgs rejects invalid sound reverb', () => {
   }, /Sound reverb must be one of: none, subtle, default, lush/);
 });
 
+test('readLog captures structured review output even when review_output is null', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-status-test-'));
+  try {
+    const filePath = path.join(tmpDir, 'structured.jsonl');
+    const structured = {
+      findings: [
+        {
+          title: '[P1] Broken flow',
+          body: 'Routing loses nested product data.',
+          priority: 1,
+          confidence_score: 0.6,
+          code_location: {
+            absolute_file_path: 'src/app.dart',
+            line_range: { start: 10, end: 14 },
+          },
+        },
+      ],
+      overall_correctness: 'patch is incorrect',
+      overall_explanation: 'Breaks deep link handling.',
+      overall_confidence_score: 0.6,
+    };
+
+    const entries = [
+      JSON.stringify({ timestamp: '2025-01-01T00:00:00.000Z', type: 'turn_context', payload: {} }),
+      JSON.stringify({ timestamp: '2025-01-01T00:00:01.000Z', type: 'event_msg', payload: { type: 'entered_review_mode' } }),
+      JSON.stringify({
+        timestamp: '2025-01-01T00:00:02.000Z',
+        type: 'event_msg',
+        payload: {
+          type: 'agent_message',
+          message: JSON.stringify(structured),
+        },
+      }),
+      JSON.stringify({
+        timestamp: '2025-01-01T00:00:03.000Z',
+        type: 'event_msg',
+        payload: {
+          type: 'exited_review_mode',
+          review_output: null,
+        },
+      }),
+    ];
+
+    fs.writeFileSync(filePath, `${entries.join('\n')}\n`);
+    const info = await readLog(filePath);
+    assert.ok(info.lastReview, 'expected lastReview to be captured');
+    assert.equal(info.lastReview.overallCorrectness, 'patch is incorrect');
+    assert.equal(info.lastReview.verdict, 'incorrect');
+    assert.equal(info.lastReview.findings.length, 1);
+    assert.equal(info.lastReview.findings[0].location.file, 'src/app.dart');
+    assert.equal(info.lastActivity, 'review');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('readLog falls back to user_action review results when structured data is missing', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-status-test-'));
+  try {
+    const filePath = path.join(tmpDir, 'user-action.jsonl');
+    const userAction = `<user_action>\n  <action>review</action>\n  <results>\n  Looks good to me.\n  </results>\n</user_action>`;
+
+    const entries = [
+      JSON.stringify({ timestamp: '2025-02-01T00:00:00.000Z', type: 'turn_context', payload: {} }),
+      JSON.stringify({ timestamp: '2025-02-01T00:00:01.000Z', type: 'event_msg', payload: { type: 'entered_review_mode' } }),
+      JSON.stringify({
+        timestamp: '2025-02-01T00:00:02.000Z',
+        type: 'event_msg',
+        payload: {
+          type: 'exited_review_mode',
+          review_output: null,
+        },
+      }),
+      JSON.stringify({
+        timestamp: '2025-02-01T00:00:03.000Z',
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'user',
+          content: [{ type: 'input_text', text: userAction }],
+        },
+      }),
+    ];
+
+    fs.writeFileSync(filePath, `${entries.join('\n')}\n`);
+    const info = await readLog(filePath);
+    assert.ok(info.lastReview, 'expected fallback review to be captured');
+    assert.equal(info.lastReview.source, 'user_action');
+    assert.equal(info.lastReview.summary, 'Looks good to me.');
+    assert.equal(info.lastReview.overallExplanation, 'Looks good to me.');
+    assert.equal(info.lastReview.findings.length, 0);
+    assert.equal(info.lastActivity, 'review');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('playAlertSound calls platform-specific command', () => {
   const calls = [];
   const mockSpawn = (cmd, args, opts) => {
@@ -476,6 +650,8 @@ test('runWatch plays sound when new activity appears', async () => {
       gatherStatuses: mockGather,
       setIntervalFn: mockSetInterval,
       playSound: mockPlaySound,
+      stdin: createMockStdin({ isTTY: true }),
+      processObject: createMockProcess(),
     });
 
     // First call: no sound (initial state)
@@ -536,6 +712,8 @@ test('runWatch does not play sound for user messages', async () => {
       gatherStatuses: mockGather,
       setIntervalFn: mockSetInterval,
       playSound: mockPlaySound,
+      stdin: createMockStdin({ isTTY: true }),
+      processObject: createMockProcess(),
     });
 
     // First call: no sound (initial state)
@@ -602,6 +780,8 @@ test('runWatch assistant mode only plays for assistant messages', async () => {
       gatherStatuses: mockGather,
       setIntervalFn: mockSetInterval,
       playSound: mockPlaySound,
+      stdin: createMockStdin({ isTTY: true }),
+      processObject: createMockProcess(),
     });
 
     // First call: no sound (initial state, assistant activity)
@@ -623,7 +803,7 @@ test('runWatch assistant mode only plays for assistant messages', async () => {
   }
 });
 
-test('runWatch some mode plays every other refresh', async () => {
+test('runWatch some mode plays assistant always and others every 2nd/3rd', async () => {
   const fakeStdout = {
     columns: 120,
     writes: [],
@@ -642,7 +822,13 @@ test('runWatch some mode plays every other refresh', async () => {
     new Date('2025-10-27T20:00:00.000Z'),
     new Date('2025-10-27T20:01:00.000Z'),
     new Date('2025-10-27T20:02:00.000Z'),
+    new Date('2025-10-27T20:03:00.000Z'),
+    new Date('2025-10-27T20:04:00.000Z'),
+    new Date('2025-10-27T20:05:00.000Z'),
   ];
+  // assistant (always plays), tool (counter=1, no sound), user (ignored), 
+  // thinking (counter=2, plays), review (counter=3, plays), assistant (always plays)
+  const activities = ['assistant', 'tool', 'user', 'thinking', 'review', 'assistant'];
 
   let callCount = 0;
   const mockGather = async () => {
@@ -652,7 +838,7 @@ test('runWatch some mode plays every other refresh', async () => {
       sessions: [{
         log: { mtime: new Date() },
         lastContext: { model: 'gpt-test' },
-        lastActivity: 'tool',
+        lastActivity: activities[idx],
         lastTimestamp: times[idx],
       }],
     };
@@ -673,22 +859,143 @@ test('runWatch some mode plays every other refresh', async () => {
       gatherStatuses: mockGather,
       setIntervalFn: mockSetInterval,
       playSound: mockPlaySound,
+      stdin: createMockStdin({ isTTY: true }),
+      processObject: createMockProcess(),
     });
 
-    // First call: no sound (initial state)
+    // First call: assistant activity, no sound (initial state)
     assert.equal(soundCalls.length, 0);
 
-    // Second call (refresh 1): sound should play (odd refresh)
+    // Second call: tool activity -> counter=1, no sound (1%2 !== 0 && 1%3 !== 0)
+    await intervals[0]();
+    assert.equal(soundCalls.length, 0);
+
+    // Third call: user activity -> no sound, counter unchanged
+    await intervals[0]();
+    assert.equal(soundCalls.length, 0);
+
+    // Fourth call: thinking activity -> counter=2, sound plays (2%2 === 0)
     await intervals[0]();
     assert.equal(soundCalls.length, 1);
 
-    // Third call (refresh 2): no sound (even refresh)
-    await intervals[0]();
-    assert.equal(soundCalls.length, 1);
-
-    // Fourth call (refresh 3): sound should play (odd refresh)
+    // Fifth call: review activity -> counter=3, sound plays (3%3 === 0)
     await intervals[0]();
     assert.equal(soundCalls.length, 2);
+
+    // Sixth call: assistant activity -> always plays, counter unchanged
+    await intervals[0]();
+    assert.equal(soundCalls.length, 3);
+  } finally {
+    console.clear = originalClear;
+  }
+});
+
+test('runWatch toggles sound mute with keyboard', async () => {
+  const fakeStdout = {
+    columns: 120,
+    writes: [],
+    write(chunk) {
+      this.writes.push(chunk);
+    },
+  };
+  const originalClear = console.clear;
+  console.clear = () => {};
+
+  const status = {
+    sessions: [{
+      log: { mtime: new Date() },
+      lastContext: { model: 'gpt-test', cwd: '/tmp/project' },
+      lastActivity: 'assistant',
+      lastTimestamp: new Date('2025-10-27T19:47:56.258Z'),
+    }],
+  };
+
+  const mockStdin = createMockStdin({ isTTY: true });
+
+  try {
+    await runWatch({
+      baseDir: '.',
+      interval: 5,
+      limit: 1,
+      sound: 'some',
+    }, fakeStdout, {
+      gatherStatuses: async () => status,
+      setIntervalFn: () => {},
+      stdin: mockStdin,
+      processObject: createMockProcess(),
+    });
+
+    assert.equal(fakeStdout.writes.length >= 1, true);
+    const initialOutput = fakeStdout.writes[fakeStdout.writes.length - 1];
+    assert.ok(initialOutput.startsWith('🔊 '));
+
+    mockStdin.emit('keypress', 'm', { name: 'm' });
+    await new Promise((resolve) => setImmediate(resolve));
+    const mutedOutput = fakeStdout.writes[fakeStdout.writes.length - 1];
+    assert.ok(mutedOutput.startsWith('🔇 '));
+
+    mockStdin.emit('keypress', 'm', { name: 'm' });
+    await new Promise((resolve) => setImmediate(resolve));
+    const unmutedOutput = fakeStdout.writes[fakeStdout.writes.length - 1];
+    assert.ok(unmutedOutput.startsWith('🔊 '));
+  } finally {
+    console.clear = originalClear;
+  }
+});
+
+test('runWatch cycles reverb with keyboard', async () => {
+  const fakeStdout = {
+    columns: 120,
+    writes: [],
+    write(chunk) {
+      this.writes.push(chunk);
+    },
+  };
+  const originalClear = console.clear;
+  console.clear = () => {};
+
+  const status = {
+    sessions: [{
+      log: { mtime: new Date() },
+      lastContext: { model: 'gpt-test', cwd: '/tmp/project' },
+      lastActivity: 'assistant',
+      lastTimestamp: new Date('2025-10-27T19:47:56.258Z'),
+    }],
+  };
+
+  const mockStdin = createMockStdin({ isTTY: true });
+  const options = {
+    baseDir: '.',
+    interval: 5,
+    limit: 1,
+    sound: 'some',
+  };
+
+  try {
+    await runWatch(options, fakeStdout, {
+      gatherStatuses: async () => status,
+      setIntervalFn: () => {},
+      stdin: mockStdin,
+      processObject: createMockProcess(),
+    });
+
+    assert.equal(fakeStdout.writes.length >= 1, true);
+    const initial = fakeStdout.writes[fakeStdout.writes.length - 1];
+    assert.ok(initial.startsWith('🔊 '));
+
+    mockStdin.emit('keypress', 'r', { name: 'r' });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(options.soundReverb, 'subtle');
+    const subtleOutput = fakeStdout.writes[fakeStdout.writes.length - 1];
+    assert.ok(subtleOutput.startsWith('🔊 '));
+    assert.ok(!subtleOutput.includes('🛁'));
+
+    mockStdin.emit('keypress', 'r', { name: 'r' });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(options.soundReverb, 'lush');
+    const lushOutput = fakeStdout.writes[fakeStdout.writes.length - 1];
+    assert.ok(lushOutput.startsWith('🔊 '));
+    assert.ok(!lushOutput.includes('⛰️'));
   } finally {
     console.clear = originalClear;
   }

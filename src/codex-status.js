@@ -143,6 +143,7 @@ function ensureCodexCli(required = '0.41.0', overrides = {}) {
 }
 
 const CANONICAL_FIELDS = [
+  'sound',
   'time',
   'error',
   'model',
@@ -157,6 +158,8 @@ const CANONICAL_FIELDS = [
 ];
 
 const FIELD_ALIASES = {
+  sound: 'sound',
+  speaker: 'sound',
   time: 'time',
   timestamp: 'time',
   age: 'time',
@@ -189,6 +192,7 @@ const FIELD_ALIASES = {
 };
 
 const DEFAULT_FORMAT_ORDER = [
+  'sound',
   'time',
   'activity',
   'daily',
@@ -201,6 +205,8 @@ const DEFAULT_FORMAT_ORDER = [
   'sandbox',
   'directory',
 ];
+
+const SOUND_REVERB_SEQUENCE = ['default', 'subtle', 'lush', 'none'];
 
 function normalizeFieldKey(key) {
   if (typeof key !== 'string') return null;
@@ -529,6 +535,197 @@ function formatCompact(value) {
   return typeof value === 'number' ? compactFormatter.format(value) : 'n/a';
 }
 
+function normalizeReviewFinding(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+
+  const title = typeof raw.title === 'string' && raw.title.trim() ? raw.title.trim() : null;
+  const body = typeof raw.body === 'string' && raw.body.trim() ? raw.body.trim() : null;
+  const priority = Number.isFinite(raw.priority) ? raw.priority : null;
+  const severity = typeof raw.severity === 'string' && raw.severity.trim() ? raw.severity.trim() : null;
+  const confidence = Number.isFinite(raw.confidence_score)
+    ? raw.confidence_score
+    : Number.isFinite(raw.confidence)
+      ? raw.confidence
+      : null;
+
+  let location = null;
+  if (raw.code_location && typeof raw.code_location === 'object') {
+    const loc = raw.code_location;
+    const file = typeof loc.absolute_file_path === 'string' && loc.absolute_file_path.trim()
+      ? loc.absolute_file_path.trim()
+      : typeof loc.file_path === 'string' && loc.file_path.trim()
+        ? loc.file_path.trim()
+        : null;
+    let startLine = null;
+    let endLine = null;
+    if (loc.line_range && typeof loc.line_range === 'object') {
+      if (Number.isFinite(loc.line_range.start)) startLine = loc.line_range.start;
+      if (Number.isFinite(loc.line_range.end)) endLine = loc.line_range.end;
+    } else {
+      if (Number.isFinite(loc.start_line)) startLine = loc.start_line;
+      if (Number.isFinite(loc.end_line)) endLine = loc.end_line;
+    }
+    if (file || startLine != null || endLine != null) {
+      location = {
+        file,
+        startLine: startLine != null ? startLine : null,
+        endLine: endLine != null ? endLine : null,
+      };
+    }
+  }
+
+  if (!title && !body && !location) return null;
+  return {
+    title,
+    body,
+    priority,
+    severity,
+    confidence,
+    location,
+  };
+}
+
+function deriveReviewVerdict(value) {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized.includes('incorrect') || normalized.includes('reject') || normalized.includes('changes')) {
+    return 'incorrect';
+  }
+  if (normalized.includes('correct') || normalized.includes('approve')) {
+    return 'correct';
+  }
+  if (normalized.includes('unsure') || normalized.includes('uncertain') || normalized.includes('follow-up')) {
+    return 'unsure';
+  }
+  return null;
+}
+
+function normalizeReviewPayload(raw, { source = 'unknown', fallbackText = null } = {}) {
+  if (raw == null) {
+    if (fallbackText) {
+      return normalizeReviewPayload(fallbackText, { source, fallbackText: null });
+    }
+    return null;
+  }
+
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    try {
+      const parsed = JSON.parse(trimmed);
+      return normalizeReviewPayload(parsed, { source, fallbackText: trimmed });
+    } catch (err) {
+      return {
+        source,
+        summary: trimmed,
+        overallCorrectness: null,
+        overallExplanation: trimmed,
+        overallConfidence: null,
+        findings: [],
+        text: trimmed,
+        verdict: null,
+        raw,
+      };
+    }
+  }
+
+  if (typeof raw !== 'object') {
+    const text = String(raw).trim();
+    if (!text) return null;
+    return {
+      source,
+      summary: text,
+      overallCorrectness: null,
+      overallExplanation: text,
+      overallConfidence: null,
+      findings: [],
+      text,
+      verdict: null,
+      raw,
+    };
+  }
+
+  const findings = Array.isArray(raw.findings)
+    ? raw.findings
+      .map((finding) => normalizeReviewFinding(finding))
+      .filter(Boolean)
+    : [];
+
+  const overallCorrectness = typeof raw.overall_correctness === 'string'
+    ? raw.overall_correctness
+    : typeof raw.overallCorrectness === 'string'
+      ? raw.overallCorrectness
+      : null;
+
+  const explanationRaw = typeof raw.overall_explanation === 'string'
+    ? raw.overall_explanation
+    : typeof raw.overallExplanation === 'string'
+      ? raw.overallExplanation
+      : null;
+  const overallExplanation = explanationRaw && explanationRaw.trim() ? explanationRaw.trim() : null;
+
+  const confidenceRaw = Number.isFinite(raw.overall_confidence_score)
+    ? raw.overall_confidence_score
+    : Number.isFinite(raw.overall_confidence)
+      ? raw.overall_confidence
+      : null;
+
+  const summaryRaw = typeof raw.summary === 'string' && raw.summary.trim() ? raw.summary.trim() : null;
+  const summary = summaryRaw || overallExplanation || (fallbackText && fallbackText.trim()) || null;
+  const text = summary || (findings.length ? (findings[0].title || findings[0].body || null) : null);
+
+  return {
+    source,
+    summary,
+    overallCorrectness,
+    overallExplanation,
+    overallConfidence: confidenceRaw,
+    findings,
+    text,
+    verdict: deriveReviewVerdict(overallCorrectness),
+    raw,
+  };
+}
+
+function mergeReviewData(base, update) {
+  if (!update) return base || null;
+  if (!base) return { ...update };
+
+  const merged = { ...base };
+
+  if (!merged.summary && update.summary) merged.summary = update.summary;
+  if (!merged.overallCorrectness && update.overallCorrectness) merged.overallCorrectness = update.overallCorrectness;
+  if (!merged.overallExplanation && update.overallExplanation) merged.overallExplanation = update.overallExplanation;
+  if (!Number.isFinite(merged.overallConfidence) && Number.isFinite(update.overallConfidence)) {
+    merged.overallConfidence = update.overallConfidence;
+  }
+  if (!merged.text && update.text) merged.text = update.text;
+  if (!merged.verdict && update.verdict) merged.verdict = update.verdict;
+  if (!merged.source && update.source) merged.source = update.source;
+
+  if (!Array.isArray(merged.findings) || merged.findings.length === 0) {
+    merged.findings = Array.isArray(update.findings) ? update.findings : [];
+  } else if (Array.isArray(update.findings) && update.findings.length > 0) {
+    merged.findings = merged.findings.concat(update.findings);
+  }
+
+  if (!merged.raw && update.raw) merged.raw = update.raw;
+  if (!merged.timestamp && update.timestamp) merged.timestamp = update.timestamp;
+
+  return merged;
+}
+
+function parseUserActionReview(text) {
+  if (typeof text !== 'string' || !text.includes('<user_action>')) return null;
+  const actionMatch = text.match(/<action>\s*([^<]+)\s*<\/action>/i);
+  if (!actionMatch || actionMatch[1].trim().toLowerCase() !== 'review') return null;
+  const resultsMatch = text.match(/<results>([\s\S]*?)<\/results>/i);
+  const resultsText = resultsMatch ? resultsMatch[1].trim() : '';
+  if (!resultsText) return null;
+  return normalizeReviewPayload(resultsText, { source: 'user_action' });
+}
+
 async function readLog(filePath) {
   const stream = fs.createReadStream(filePath, 'utf8');
   const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
@@ -538,6 +735,9 @@ async function readLog(filePath) {
   let lastTimestamp = null;
   let lastAssistantMessageTime = null;
   let lastActivity = null;
+  let lastReview = null;
+  let reviewMode = false;
+  let pendingReview = null;
 
   for await (const line of rl) {
     const trimmed = line.trim();
@@ -557,8 +757,36 @@ async function readLog(filePath) {
 
     if (record.type === 'turn_context') {
       lastContext = record.payload || null;
-    } else if (record.type === 'event_msg' && record.payload && record.payload.type === 'token_count') {
-      lastTokenCount = record.payload;
+    } else if (record.type === 'event_msg' && record.payload) {
+      const eventPayload = record.payload;
+      if (eventPayload.type === 'token_count') {
+        lastTokenCount = eventPayload;
+      } else if (eventPayload.type === 'entered_review_mode') {
+        reviewMode = true;
+        pendingReview = null;
+      } else if (eventPayload.type === 'agent_message') {
+        if (reviewMode) {
+          const normalized = normalizeReviewPayload(eventPayload.message, { source: 'agent_message' });
+          if (normalized) {
+            if (lastTimestamp) normalized.timestamp = lastTimestamp;
+            pendingReview = mergeReviewData(pendingReview, normalized);
+          }
+        }
+      } else if (eventPayload.type === 'exited_review_mode') {
+        reviewMode = false;
+        const fromPayload = normalizeReviewPayload(eventPayload.review_output, { source: 'exited_review_mode' });
+        let reviewData = mergeReviewData(fromPayload, pendingReview);
+        if (!reviewData && eventPayload.message) {
+          reviewData = normalizeReviewPayload(eventPayload.message, { source: 'exited_review_mode' });
+        }
+        if (reviewData) {
+          if (lastTimestamp) reviewData.timestamp = lastTimestamp;
+          if (!reviewData.verdict) reviewData.verdict = deriveReviewVerdict(reviewData.overallCorrectness);
+          lastReview = reviewData;
+          lastActivity = 'review';
+        }
+        pendingReview = null;
+      }
     } else if (record.type === 'response_item' && record.payload) {
       const payload = record.payload;
       
@@ -572,7 +800,27 @@ async function readLog(filePath) {
 
       // Track activity type for display
       if (payload.role === 'user') {
-        lastActivity = 'user';
+        let treated = false;
+        if (Array.isArray(payload.content)) {
+          for (const part of payload.content) {
+            if (part && typeof part === 'object' && typeof part.text === 'string') {
+              const reviewFromUserAction = parseUserActionReview(part.text);
+              if (reviewFromUserAction) {
+                if (lastTimestamp) reviewFromUserAction.timestamp = lastTimestamp;
+                lastReview = mergeReviewData(lastReview, reviewFromUserAction) || reviewFromUserAction;
+                if (!lastReview.verdict) {
+                  lastReview.verdict = deriveReviewVerdict(lastReview.overallCorrectness);
+                }
+                lastActivity = 'review';
+                treated = true;
+                break;
+              }
+            }
+          }
+        }
+        if (!treated) {
+          lastActivity = 'user';
+        }
       } else if (payload.role === 'assistant') {
         lastActivity = 'assistant';
       } else if (payload.type === 'function_call') {
@@ -583,7 +831,7 @@ async function readLog(filePath) {
     }
   }
 
-  return { lastContext, lastTokenCount, lastTimestamp, lastAssistantMessageTime, lastActivity };
+  return { lastContext, lastTokenCount, lastTimestamp, lastAssistantMessageTime, lastActivity, lastReview };
 }
 
 async function gatherStatuses(baseDir, limit) {
@@ -621,6 +869,10 @@ function formatRateWindow(windowData) {
 }
 
 const FIELD_DEFINITIONS = {
+  sound: {
+    defaultLabel: '',
+    build: ({ options }) => resolveSoundStatusIcon(options),
+  },
   time: {
     defaultLabel: '🕒',
     build: ({ detail }) => formatAgoShort(detail.log.mtime),
@@ -708,8 +960,9 @@ const FIELD_DEFINITIONS = {
         assistant: '⁉️',
         tool: '🔧',
         thinking: '🤔',
+        review: '📝',
       };
-      
+
       return activityMap[activity] || activity;
     },
   },
@@ -725,6 +978,20 @@ const FIELD_DEFINITIONS = {
     },
   },
 };
+
+function resolveSoundStatusIcon(options) {
+  if (!options || !options.showSoundStatus) return null;
+  if (!options.sound || options.sound === 'off') return null;
+  const muted = Boolean(options.soundMuted);
+  if (muted) return '🔇';
+  return '🔊';
+}
+
+function nextReverbSetting(current) {
+  const idx = SOUND_REVERB_SEQUENCE.indexOf(current || 'default');
+  const nextIdx = (idx + 1) % SOUND_REVERB_SEQUENCE.length;
+  return SOUND_REVERB_SEQUENCE[nextIdx];
+}
 
 function formatSessionSummary(detail, options = {}) {
   const minimal = Boolean(options.minimal);
@@ -749,6 +1016,7 @@ function formatSessionSummary(detail, options = {}) {
     context,
     tokenInfo,
     rateLimits,
+    options,
   };
 
   const pieces = [];
@@ -771,6 +1039,7 @@ function formatSessionSummary(detail, options = {}) {
   if (!pieces.length) {
     return '⚡ no status';
   }
+
   return pieces.join(' ');
 }
 
@@ -795,23 +1064,60 @@ async function runWatch(options, stdout, deps = {}) {
   const gather = deps.gatherStatuses || gatherStatuses;
   const setIntervalFn = deps.setIntervalFn || setInterval;
   const playSound = deps.playSound || playAlertSound;
+  const stdin = deps.stdin || process.stdin;
+  const processObj = deps.processObject || process;
 
   let running = false;
   let lastSeenActivity = null;
   let lastSeenTimestamp = null;
-  let lastRefreshCount = 0;
+  let lastStatus = null;
+  let soundMuted = false;
+  let cleanedUp = false;
+  let keypressListener = null;
+  let rawModeEnabled = false;
+  let messageCounter = 0;
 
-  async function draw() {
+  function cleanupInput() {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    if (stdin && keypressListener) {
+      stdin.removeListener('keypress', keypressListener);
+    }
+    if (stdin && rawModeEnabled && typeof stdin.setRawMode === 'function') {
+      stdin.setRawMode(false);
+    }
+  }
+
+  function updateSoundOptions() {
+    options.soundMuted = soundMuted;
+    options.showSoundStatus = options.sound !== 'off';
+  }
+
+  function isSoundMuted() {
+    return options.sound === 'off' || soundMuted;
+  }
+
+  async function draw({ reuseLastStatus = false } = {}) {
     if (running) return;
     running = true;
     try {
-      const status = await gather(baseDir, options.limit);
+      let status;
+      let gathered = false;
+      if (reuseLastStatus && lastStatus) {
+        status = lastStatus;
+      } else {
+        status = await gather(baseDir, options.limit);
+        lastStatus = status;
+        gathered = true;
+      }
+
+      updateSoundOptions();
       const summary = buildReport(status, options);
       console.clear();
       stdout.write(`${truncateToTerminal(summary, columns())}\n`);
 
       // Check for any new activity if sound is enabled
-      if (options.sound !== 'off' && status.sessions && status.sessions.length > 0) {
+      if (gathered && !isSoundMuted() && status.sessions && status.sessions.length > 0) {
         const detail = status.sessions[0];
         const currentActivity = detail.lastActivity;
         const currentTimestamp = detail.lastTimestamp ? detail.lastTimestamp.getTime() : null;
@@ -824,7 +1130,6 @@ async function runWatch(options, stdout, deps = {}) {
           // New activity detected (timestamp changed)!
           lastSeenActivity = currentActivity;
           lastSeenTimestamp = currentTimestamp;
-          lastRefreshCount += 1;
 
           // Determine if we should play sound based on mode and activity
           let shouldPlay = false;
@@ -833,8 +1138,16 @@ async function runWatch(options, stdout, deps = {}) {
             // Only play for assistant messages
             shouldPlay = currentActivity === 'assistant';
           } else if (options.sound === 'some') {
-            // Play every other refresh, skip user messages
-            shouldPlay = currentActivity !== 'user' && (lastRefreshCount % 2 === 1);
+            // Play for assistant messages always (tada sound)
+            if (currentActivity === 'assistant') {
+              shouldPlay = true;
+              // Don't increment counter for assistant messages
+            } else if (currentActivity !== 'user') {
+              // For other non-user activities, increment counter and play every 2nd or 3rd
+              messageCounter += 1;
+              shouldPlay = messageCounter % 2 === 0 || messageCounter % 3 === 0;
+            }
+            // User messages are ignored (no sound, no counter increment)
           } else if (options.sound === 'all') {
             // Play for all non-user activities
             shouldPlay = currentActivity !== 'user';
@@ -847,6 +1160,67 @@ async function runWatch(options, stdout, deps = {}) {
       }
     } finally {
       running = false;
+    }
+  }
+
+  updateSoundOptions();
+
+  if (stdin && typeof stdin.on === 'function') {
+    readline.emitKeypressEvents(stdin);
+    if (stdin.isTTY && typeof stdin.setRawMode === 'function') {
+      stdin.setRawMode(true);
+      rawModeEnabled = true;
+      if (typeof stdin.resume === 'function') stdin.resume();
+    }
+
+    keypressListener = (str, key = {}) => {
+      const sequence = typeof str === 'string' ? str : '';
+      const keyName = key && typeof key.name === 'string' ? key.name : '';
+      if (sequence && sequence.charCodeAt(0) === 3) {
+        cleanupInput();
+        if (processObj && typeof processObj.exit === 'function') {
+          processObj.exit();
+        } else {
+          process.exit();
+        }
+        return;
+      }
+      if ((sequence && sequence.toLowerCase() === 'q') || keyName === 'q') {
+        cleanupInput();
+        if (processObj && typeof processObj.exit === 'function') {
+          processObj.exit();
+        } else {
+          process.exit();
+        }
+        return;
+      }
+      if ((sequence && sequence.toLowerCase() === 'm') || keyName === 'm') {
+        soundMuted = !soundMuted;
+        updateSoundOptions();
+        draw({ reuseLastStatus: true }).catch((err) => {
+          console.error('Redraw failed after mute toggle:', err.message || err);
+        });
+      } else if ((sequence && sequence.toLowerCase() === 'r') || keyName === 'r') {
+        if (options.sound === 'off') return;
+        options.soundReverb = nextReverbSetting(options.soundReverb);
+        updateSoundOptions();
+        draw({ reuseLastStatus: true }).catch((err) => {
+          console.error('Redraw failed after reverb toggle:', err.message || err);
+        });
+      }
+    };
+
+    stdin.on('keypress', keypressListener);
+    if (processObj && typeof processObj.once === 'function') {
+      processObj.once('SIGINT', () => {
+        cleanupInput();
+        if (typeof processObj.exit === 'function') {
+          processObj.exit();
+        } else {
+          process.exit();
+        }
+      });
+      processObj.once('exit', cleanupInput);
     }
   }
 

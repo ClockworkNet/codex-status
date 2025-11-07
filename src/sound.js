@@ -90,11 +90,11 @@ const REVERB_PRESETS = {
     feedbackGain: 0.3,
   },
   lush: {
-    tailSeconds: 3.0,
+    tailSeconds: 4.5,
     numDelays: 9,
-    wetMix: 0.7,
-    dryMix: 0.2,
-    feedbackGain: 0.5,
+    wetMix: 0.85,
+    dryMix: 0.15,
+    feedbackGain: 0.6,
   },
 };
 
@@ -204,8 +204,11 @@ function generateMultiToneBeep(frequencies, noteDuration = 180, reverbOptions = 
   const finalSamples = (reverbOptions === false || reverbOptions === 'none')
     ? filteredSamples 
     : applyReverb(filteredSamples, 8000, reverbOptions);
-  
-  // Create new header for combined length
+
+  return wrapSamplesWithHeader(finalSamples);
+}
+
+function wrapSamplesWithHeader(finalSamples) {
   const header = Buffer.alloc(44);
   header.write('RIFF', 0);
   header.writeUInt32LE(36 + finalSamples.length, 4);
@@ -220,7 +223,7 @@ function generateMultiToneBeep(frequencies, noteDuration = 180, reverbOptions = 
   header.writeUInt16LE(16, 34);
   header.write('data', 36);
   header.writeUInt32LE(finalSamples.length, 40);
-  
+
   return Buffer.concat([header, finalSamples]);
 }
 
@@ -280,9 +283,9 @@ function initializePreGeneratedSounds(volumePercent = 100) {
 function generateG6ChordBeep(activityType, soundMode = 'all', volumePercent = 100, reverbOptions = 'default') {
   // Lazy initialization - only generate sounds when first needed
   initializePreGeneratedSounds(volumePercent);
-  
+
   const isAssistant = activityType === 'assistant';
-  
+
   if (isAssistant) {
     // Generate assistant sound with specified reverb
     const combinedSamples = Buffer.concat(preGeneratedSounds.assistantNoteBuffers);
@@ -291,25 +294,9 @@ function generateG6ChordBeep(activityType, soundMode = 'all', volumePercent = 10
       ? filteredSamples
       : applyReverb(filteredSamples, 8000, reverbOptions);
     
-    // Create WAV with header
-    const header = Buffer.alloc(44);
-    header.write('RIFF', 0);
-    header.writeUInt32LE(36 + finalSamples.length, 4);
-    header.write('WAVE', 8);
-    header.write('fmt ', 12);
-    header.writeUInt32LE(16, 16);
-    header.writeUInt16LE(1, 20);
-    header.writeUInt16LE(1, 22);
-    header.writeUInt32LE(8000, 24);
-    header.writeUInt32LE(16000, 28);
-    header.writeUInt16LE(2, 32);
-    header.writeUInt16LE(16, 34);
-    header.write('data', 36);
-    header.writeUInt32LE(finalSamples.length, 40);
-    
-    return Buffer.concat([header, finalSamples]);
+    return wrapSamplesWithHeader(finalSamples);
   }
-  
+
   // Non-assistant sounds: select random notes and combine them
   const noteCount = soundMode === 'some' ? 2 : 3 + Math.floor(Math.random() * 2);
   const availableIndices = Array.from({ length: preGeneratedSounds.noteBuffers.length }, (_, i) => i);
@@ -337,23 +324,7 @@ function generateG6ChordBeep(activityType, soundMode = 'all', volumePercent = 10
     ? filteredSamples
     : applyReverb(filteredSamples, 8000, reverbOptions);
   
-  // Create WAV with header
-  const header = Buffer.alloc(44);
-  header.write('RIFF', 0);
-  header.writeUInt32LE(36 + finalSamples.length, 4);
-  header.write('WAVE', 8);
-  header.write('fmt ', 12);
-  header.writeUInt32LE(16, 16);
-  header.writeUInt16LE(1, 20);
-  header.writeUInt16LE(1, 22);
-  header.writeUInt32LE(8000, 24);
-  header.writeUInt32LE(16000, 28);
-  header.writeUInt16LE(2, 32);
-  header.writeUInt16LE(16, 34);
-  header.write('data', 36);
-  header.writeUInt32LE(finalSamples.length, 40);
-  
-  return Buffer.concat([header, finalSamples]);
+  return wrapSamplesWithHeader(finalSamples);
 }
 
 function playAlertSound(activityType, soundMode = 'all', volumePercent = 100, reverbOptions = 'default', overrides = {}) {
@@ -424,4 +395,3 @@ module.exports = {
   playAlertSound,
   REVERB_PRESETS,
 };
-
